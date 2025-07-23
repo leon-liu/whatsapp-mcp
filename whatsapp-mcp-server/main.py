@@ -12,8 +12,11 @@ from whatsapp import (
     send_message as whatsapp_send_message,
     send_file as whatsapp_send_file,
     send_audio_message as whatsapp_audio_voice_message,
-    download_media as whatsapp_download_media
+    download_media as whatsapp_download_media,
+    login as whatsapp_login,
+    get_qr_code as whatsapp_get_qr_code
 )
+import requests
 
 # Initialize FastMCP server
 mcp = FastMCP("whatsapp")
@@ -246,6 +249,138 @@ def download_media(message_id: str, chat_jid: str) -> Dict[str, Any]:
             "message": "Failed to download media"
         }
 
+@mcp.tool()
+def get_qr_code(user_id: Optional[str] = None) -> Dict[str, Any]:
+    """Get QR code for WhatsApp login without polling for status.
+    
+    Args:
+        user_id: Optional user ID. If not provided, will use or create a user ID automatically.
+    
+    Returns:
+        A dictionary containing success status, QR code as base64, and status message
+    """
+    try:
+        result = whatsapp_get_qr_code(user_id)
+        return result
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"QR code generation error: {str(e)}"
+        }
+
+@mcp.tool()
+def login(user_id: Optional[str] = None, poll_for_completion: bool = False) -> Dict[str, Any]:
+    """Login to WhatsApp using QR code authentication.
+    
+    Args:
+        user_id: Optional user ID. If not provided, will use or create a user ID automatically.
+        poll_for_completion: If True, polls until login completes. If False, returns QR code immediately.
+    
+    Returns:
+        A dictionary containing success status, QR code (if not polling), and status message
+    """
+    try:
+        if poll_for_completion:
+            # Original behavior - poll until completion
+            success = whatsapp_login(user_id)
+            if success:
+                return {
+                    "success": True,
+                    "message": "Login successful! You can now use WhatsApp features."
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": "Login failed or timed out. Please try again."
+                }
+        else:
+            # New behavior - return QR code immediately
+            qr_result = whatsapp_get_qr_code(user_id)
+            if qr_result["success"]:
+                return {
+                    "success": True,
+                    "qr_code_base64": qr_result["qr_code_base64"],
+                    "user_id": qr_result["user_id"],
+                    "message": "QR code generated. Please scan it with WhatsApp. Use get_login_status to check completion.",
+                    "action_required": "scan_qr_code"
+                }
+            else:
+                return qr_result
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Login error: {str(e)}"
+        }
+
+@mcp.tool()
+def get_login_status(user_id: str) -> Dict[str, Any]:
+    """Check the login status for a specific user.
+    
+    Args:
+        user_id: The user ID to check login status for
+    
+    Returns:
+        A dictionary containing login status and message
+    """
+    try:
+        status_url = f"http://localhost:8080/api/login_status?user_id={user_id}"
+        response = requests.get(status_url, timeout=5)
+        
+        if response.status_code == 200:
+            status_data = response.json()
+            status = status_data.get("status", "unknown")
+            
+            if status == "success":
+                return {
+                    "success": True,
+                    "status": "success",
+                    "message": "Login successful! You can now use WhatsApp features."
+                }
+            elif status == "failed":
+                return {
+                    "success": False,
+                    "status": "failed",
+                    "message": "Login failed. Please try again."
+                }
+            elif status == "pending":
+                return {
+                    "success": False,
+                    "status": "pending",
+                    "message": "Waiting for QR code scan. Please scan the QR code with WhatsApp."
+                }
+            else:
+                return {
+                    "success": False,
+                    "status": "unknown",
+                    "message": f"Unknown login status: {status}"
+                }
+        else:
+            return {
+                "success": False,
+                "status": "error",
+                "message": f"Error checking login status: HTTP {response.status_code}"
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "status": "error",
+            "message": f"Error checking login status: {str(e)}"
+        }
+
 if __name__ == "__main__":
-    # Initialize and run the server
-    mcp.run(transport='stdio')
+    # Initialize and run the server with SSE transport
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='WhatsApp MCP Server')
+    parser.add_argument('--transport', choices=['stdio', 'sse'], default='sse', 
+                       help='Transport method (default: sse)')
+    
+    args = parser.parse_args()
+    
+    if args.transport == 'sse':
+        print("Starting WhatsApp MCP Server with SSE transport")
+        print("Note: SSE transport uses default FastMCP settings")
+        mcp.run(transport='sse')
+    else:
+        print("Starting WhatsApp MCP Server with stdio transport")
+        mcp.run(transport='stdio')

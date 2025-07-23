@@ -21,6 +21,9 @@ import (
 	"github.com/mdp/qrterminal"
 
 	"bytes"
+	"sync"
+
+	"github.com/skip2/go-qrcode"
 
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
@@ -675,10 +678,127 @@ func extractDirectPathFromURL(url string) string {
 	return "/" + pathPart
 }
 
+var (
+	clients     = make(map[string]*whatsmeow.Client)
+	clientLocks = make(map[string]*sync.Mutex)
+	qrCodes     = make(map[string][]byte) // userID -> QR PNG bytes
+	loginStatus = make(map[string]string) // userID -> "pending"|"success"|"failed"
+)
+
+func getClientForUser(userID string, logger waLog.Logger) (*whatsmeow.Client, error) {
+	lock, ok := clientLocks[userID]
+	if !ok {
+		lock = &sync.Mutex{}
+		clientLocks[userID] = lock
+	}
+	lock.Lock()
+	defer lock.Unlock()
+
+	if client, ok := clients[userID]; ok {
+		return client, nil
+	}
+	dbLog := waLog.Stdout("Database", "INFO", true)
+	dbPath := fmt.Sprintf("store/%s/whatsapp.db", userID)
+	os.MkdirAll(fmt.Sprintf("store/%s", userID), 0755)
+	container, err := sqlstore.New("sqlite3", "file:"+dbPath+"?_foreign_keys=on", dbLog)
+	if err != nil {
+		return nil, err
+	}
+	deviceStore, err := container.GetFirstDevice()
+	if err == sql.ErrNoRows {
+		deviceStore = container.NewDevice()
+	} else if err != nil {
+		return nil, err
+	}
+	client := whatsmeow.NewClient(deviceStore, logger)
+	clients[userID] = client
+	return client, nil
+}
+
 // Start a REST API server to expose the WhatsApp client functionality
 func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port int) {
-	// Handler for sending messages
+	// QR code endpoint
+	http.HandleFunc("/api/qr", func(w http.ResponseWriter, r *http.Request) {
+		userID := r.URL.Query().Get("user_id")
+		if userID == "" {
+			http.Error(w, "user_id required", http.StatusBadRequest)
+			return
+		}
+		logger := waLog.Stdout("Client", "INFO", true)
+		client, err := getClientForUser(userID, logger)
+		if err != nil {
+			http.Error(w, "Failed to get client: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if client.Store.ID != nil && client.IsConnected() {
+			http.Error(w, "Already logged in", http.StatusBadRequest)
+			return
+		}
+		// If QR already generated and still valid, return it
+		if png, ok := qrCodes[userID]; ok && loginStatus[userID] == "pending" {
+			w.Header().Set("Content-Type", "image/png")
+			w.Write(png)
+			return
+		}
+		// Start QR pairing
+		qrChan, _ := client.GetQRChannel(context.Background())
+		go func() {
+			for evt := range qrChan {
+				if evt.Event == "code" {
+					png, _ := qrcode.Encode(evt.Code, qrcode.Medium, 256)
+					qrCodes[userID] = png
+					loginStatus[userID] = "pending"
+				} else if evt.Event == "success" {
+					loginStatus[userID] = "success"
+					break
+				} else if evt.Event == "timeout" || evt.Event == "error" {
+					loginStatus[userID] = "failed"
+					break
+				}
+			}
+		}()
+		err = client.Connect()
+		if err != nil {
+			http.Error(w, "Failed to connect: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Wait for QR to be generated
+		for i := 0; i < 20; i++ {
+			if png, ok := qrCodes[userID]; ok {
+				w.Header().Set("Content-Type", "image/png")
+				w.Write(png)
+				return
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		http.Error(w, "QR code not ready", http.StatusInternalServerError)
+	})
+
+	// Login status endpoint
+	http.HandleFunc("/api/login_status", func(w http.ResponseWriter, r *http.Request) {
+		userID := r.URL.Query().Get("user_id")
+		if userID == "" {
+			http.Error(w, "user_id required", http.StatusBadRequest)
+			return
+		}
+		status := loginStatus[userID]
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": status})
+	})
+
+	// Handler for sending messages (updated for user_id)
 	http.HandleFunc("/api/send", func(w http.ResponseWriter, r *http.Request) {
+		userID := r.URL.Query().Get("user_id")
+		if userID == "" {
+			http.Error(w, "user_id required", http.StatusBadRequest)
+			return
+		}
+		logger := waLog.Stdout("Client", "INFO", true)
+		client, err := getClientForUser(userID, logger)
+		if err != nil {
+			http.Error(w, "Failed to get client: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 		// Only allow POST requests
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -723,8 +843,19 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 		})
 	})
 
-	// Handler for downloading media
+	// Handler for downloading media (updated for user_id)
 	http.HandleFunc("/api/download", func(w http.ResponseWriter, r *http.Request) {
+		userID := r.URL.Query().Get("user_id")
+		if userID == "" {
+			http.Error(w, "user_id required", http.StatusBadRequest)
+			return
+		}
+		logger := waLog.Stdout("Client", "INFO", true)
+		client, err := getClientForUser(userID, logger)
+		if err != nil {
+			http.Error(w, "Failed to get client: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 		// Only allow POST requests
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

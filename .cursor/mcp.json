@@ -1,0 +1,13 @@
+{
+    "mcpServers": {
+      "whatsapp": {
+        "command": "/Users/liu-yang/.local/bin/uv",
+        "args": [
+            "--directory",
+            "/Users/liu-yang/workspace/leon/ai/mcp/fork_whatsapp-mcp/whatsapp-mcp/whatsapp-mcp-server",
+            "run",
+            "main.py"
+        ]
+      }
+    }
+  }

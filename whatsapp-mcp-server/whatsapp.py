@@ -6,9 +6,25 @@ import os.path
 import requests
 import json
 import audio
+import uuid
+import os
+import time
+import base64
 
 MESSAGES_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'whatsapp-bridge', 'store', 'messages.db')
 WHATSAPP_API_BASE_URL = "http://localhost:8080/api"
+USER_ID_FILE = "user_id.txt"
+
+def get_or_create_user_id():
+    if os.path.exists(USER_ID_FILE):
+        with open(USER_ID_FILE, "r") as f:
+            return f.read().strip()
+    user_id = str(uuid.uuid4())
+    with open(USER_ID_FILE, "w") as f:
+        f.write(user_id)
+    return user_id
+
+user_id = get_or_create_user_id()
 
 @dataclass
 class Message:
@@ -47,7 +63,7 @@ class MessageContext:
     before: List[Message]
     after: List[Message]
 
-def get_sender_name(sender_jid: str) -> str:
+def git (sender_jid: str) -> str:
     try:
         conn = sqlite3.connect(MESSAGES_DB_PATH)
         cursor = conn.cursor()
@@ -105,7 +121,7 @@ def format_message(message: Message, show_chat_info: bool = True) -> None:
         content_prefix = f"[{message.media_type} - Message ID: {message.id} - Chat JID: {message.chat_jid}] "
     
     try:
-        sender_name = get_sender_name(message.sender) if not message.is_from_me else "Me"
+        sender_name = git (message.sender) if not message.is_from_me else "Me"
         output += f"From: {sender_name}: {content_prefix}{message.content}\n"
     except Exception as e:
         print(f"Error formatting message: {e}")
@@ -622,146 +638,155 @@ def get_direct_chat_by_contact(sender_phone_number: str) -> Optional[Chat]:
         if 'conn' in locals():
             conn.close()
 
-def send_message(recipient: str, message: str) -> Tuple[bool, str]:
-    try:
-        # Validate input
-        if not recipient:
-            return False, "Recipient must be provided"
-        
-        url = f"{WHATSAPP_API_BASE_URL}/send"
-        payload = {
-            "recipient": recipient,
-            "message": message,
-        }
-        
-        response = requests.post(url, json=payload)
-        
-        # Check if the request was successful
-        if response.status_code == 200:
-            result = response.json()
-            return result.get("success", False), result.get("message", "Unknown response")
-        else:
-            return False, f"Error: HTTP {response.status_code} - {response.text}"
-            
-    except requests.RequestException as e:
-        return False, f"Request error: {str(e)}"
-    except json.JSONDecodeError:
-        return False, f"Error parsing response: {response.text}"
-    except Exception as e:
-        return False, f"Unexpected error: {str(e)}"
-
-def send_file(recipient: str, media_path: str) -> Tuple[bool, str]:
-    try:
-        # Validate input
-        if not recipient:
-            return False, "Recipient must be provided"
-        
-        if not media_path:
-            return False, "Media path must be provided"
-        
-        if not os.path.isfile(media_path):
-            return False, f"Media file not found: {media_path}"
-        
-        url = f"{WHATSAPP_API_BASE_URL}/send"
-        payload = {
-            "recipient": recipient,
-            "media_path": media_path
-        }
-        
-        response = requests.post(url, json=payload)
-        
-        # Check if the request was successful
-        if response.status_code == 200:
-            result = response.json()
-            return result.get("success", False), result.get("message", "Unknown response")
-        else:
-            return False, f"Error: HTTP {response.status_code} - {response.text}"
-            
-    except requests.RequestException as e:
-        return False, f"Request error: {str(e)}"
-    except json.JSONDecodeError:
-        return False, f"Error parsing response: {response.text}"
-    except Exception as e:
-        return False, f"Unexpected error: {str(e)}"
-
-def send_audio_message(recipient: str, media_path: str) -> Tuple[bool, str]:
-    try:
-        # Validate input
-        if not recipient:
-            return False, "Recipient must be provided"
-        
-        if not media_path:
-            return False, "Media path must be provided"
-        
-        if not os.path.isfile(media_path):
-            return False, f"Media file not found: {media_path}"
-
-        if not media_path.endswith(".ogg"):
-            try:
-                media_path = audio.convert_to_opus_ogg_temp(media_path)
-            except Exception as e:
-                return False, f"Error converting file to opus ogg. You likely need to install ffmpeg: {str(e)}"
-        
-        url = f"{WHATSAPP_API_BASE_URL}/send"
-        payload = {
-            "recipient": recipient,
-            "media_path": media_path
-        }
-        
-        response = requests.post(url, json=payload)
-        
-        # Check if the request was successful
-        if response.status_code == 200:
-            result = response.json()
-            return result.get("success", False), result.get("message", "Unknown response")
-        else:
-            return False, f"Error: HTTP {response.status_code} - {response.text}"
-            
-    except requests.RequestException as e:
-        return False, f"Request error: {str(e)}"
-    except json.JSONDecodeError:
-        return False, f"Error parsing response: {response.text}"
-    except Exception as e:
-        return False, f"Unexpected error: {str(e)}"
-
-def download_media(message_id: str, chat_jid: str) -> Optional[str]:
-    """Download media from a message and return the local file path.
+def get_qr_code(user_id: str = None) -> dict:
+    """Get QR code for WhatsApp login without polling for status."""
+    if user_id is None:
+        user_id = get_or_create_user_id()
     
-    Args:
-        message_id: The ID of the message containing the media
-        chat_jid: The JID of the chat containing the message
+    qr_url = f"{WHATSAPP_API_BASE_URL}/qr?user_id={user_id}"
+    resp = requests.get(qr_url)
     
-    Returns:
-        The local file path if download was successful, None otherwise
-    """
-    try:
-        url = f"{WHATSAPP_API_BASE_URL}/download"
-        payload = {
-            "message_id": message_id,
-            "chat_jid": chat_jid
+    if resp.status_code == 200:
+        # Convert QR code image to base64
+        qr_base64 = base64.b64encode(resp.content).decode('utf-8')
+        
+        # Also save to disk for backward compatibility
+        qr_path = f"{user_id}_qr.png"
+        with open(qr_path, "wb") as f:
+            f.write(resp.content)
+        
+        return {
+            "success": True,
+            "user_id": user_id,
+            "qr_code_base64": qr_base64,
+            "qr_code_path": qr_path,
+            "message": f"QR code generated for user {user_id}. Please scan it with WhatsApp."
         }
-        
-        response = requests.post(url, json=payload)
-        
-        if response.status_code == 200:
-            result = response.json()
-            if result.get("success", False):
-                path = result.get("path")
-                print(f"Media downloaded successfully: {path}")
-                return path
+    else:
+        return {
+            "success": False,
+            "message": f"Failed to get QR code: {resp.text}"
+        }
+
+def login(user_id: str = None):
+    """Login to WhatsApp for a specific user_id using QR code."""
+    if user_id is None:
+        user_id = get_or_create_user_id()
+    
+    # Get QR code first
+    qr_result = get_qr_code(user_id)
+    if not qr_result["success"]:
+        print(qr_result["message"])
+        return False
+    
+    print(f"QR code generated. Please scan it with WhatsApp.")
+    
+    # Poll for login status
+    status_url = f"{WHATSAPP_API_BASE_URL}/login_status?user_id={user_id}"
+    for _ in range(300):  # Try for up to 10 minutes (300 iterations × 2 seconds)
+        status_resp = requests.get(status_url)
+        if status_resp.status_code == 200:
+            status = status_resp.json().get("status")
+            if status == "success":
+                print("Login successful!")
+                return True
+            elif status == "failed":
+                print("Login failed. Please try again.")
+                return False
             else:
-                print(f"Download failed: {result.get('message', 'Unknown error')}")
-                return None
+                print("Waiting for QR scan...")
         else:
-            print(f"Error: HTTP {response.status_code} - {response.text}")
+            print("Error checking login status:", status_resp.text)
+        time.sleep(2)
+    print("Login timed out after 10 minutes. Please try again.")
+    return False
+
+def send_message(recipient: str, message: str, user_id: str = None) -> tuple:
+    if user_id is None:
+        user_id = get_or_create_user_id()
+    # Validate input
+    if not recipient:
+        return False, "Recipient must be provided"
+    url = f"{WHATSAPP_API_BASE_URL}/send?user_id={user_id}"
+    payload = {
+        "recipient": recipient,
+        "message": message,
+    }
+    response = requests.post(url, json=payload)
+    if response.status_code == 200:
+        result = response.json()
+        return result.get("success", False), result.get("message", "Unknown response")
+    else:
+        return False, f"Error: HTTP {response.status_code} - {response.text}"
+
+
+def send_file(recipient: str, media_path: str, user_id: str = None) -> tuple:
+    if user_id is None:
+        user_id = get_or_create_user_id()
+    if not recipient:
+        return False, "Recipient must be provided"
+    if not media_path:
+        return False, "Media path must be provided"
+    if not os.path.isfile(media_path):
+        return False, f"Media file not found: {media_path}"
+    url = f"{WHATSAPP_API_BASE_URL}/send?user_id={user_id}"
+    payload = {
+        "recipient": recipient,
+        "media_path": media_path
+    }
+    response = requests.post(url, json=payload)
+    if response.status_code == 200:
+        result = response.json()
+        return result.get("success", False), result.get("message", "Unknown response")
+    else:
+        return False, f"Error: HTTP {response.status_code} - {response.text}"
+
+
+def send_audio_message(recipient: str, media_path: str, user_id: str = None) -> tuple:
+    if user_id is None:
+        user_id = get_or_create_user_id()
+    if not recipient:
+        return False, "Recipient must be provided"
+    if not media_path:
+        return False, "Media path must be provided"
+    if not os.path.isfile(media_path):
+        return False, f"Media file not found: {media_path}"
+    if not media_path.endswith(".ogg"):
+        try:
+            media_path = audio.convert_to_opus_ogg_temp(media_path)
+        except Exception as e:
+            return False, f"Error converting file to opus ogg. You likely need to install ffmpeg: {str(e)}"
+    url = f"{WHATSAPP_API_BASE_URL}/send?user_id={user_id}"
+    payload = {
+        "recipient": recipient,
+        "media_path": media_path
+    }
+    response = requests.post(url, json=payload)
+    if response.status_code == 200:
+        result = response.json()
+        return result.get("success", False), result.get("message", "Unknown response")
+    else:
+        return False, f"Error: HTTP {response.status_code} - {response.text}"
+
+
+def download_media(message_id: str, chat_jid: str, user_id: str = None) -> str:
+    if user_id is None:
+        user_id = get_or_create_user_id()
+    url = f"{WHATSAPP_API_BASE_URL}/download?user_id={user_id}"
+    payload = {
+        "message_id": message_id,
+        "chat_jid": chat_jid
+    }
+    response = requests.post(url, json=payload)
+    if response.status_code == 200:
+        result = response.json()
+        if result.get("success", False):
+            path = result.get("path")
+            print(f"Media downloaded successfully: {path}")
+            return path
+        else:
+            print(f"Download failed: {result.get('message', 'Unknown error')}")
             return None
-            
-    except requests.RequestException as e:
-        print(f"Request error: {str(e)}")
-        return None
-    except json.JSONDecodeError:
-        print(f"Error parsing response: {response.text}")
-        return None
-    except Exception as e:
-        print(f"Unexpected error: {str(e)}")
+    else:
+        print(f"Error: HTTP {response.status_code} - {response.text}")
         return None
