@@ -18,7 +18,6 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/mdp/qrterminal"
 
 	"bytes"
 	"sync"
@@ -987,54 +986,8 @@ func main() {
 	// Create channel to track connection success
 	connected := make(chan bool, 1)
 
-	// Connect to WhatsApp
-	if client.Store.ID == nil {
-		// No ID stored, this is a new client, need to pair with phone
-		qrChan, _ := client.GetQRChannel(context.Background())
-		err = client.Connect()
-		if err != nil {
-			logger.Errorf("Failed to connect: %v", err)
-			return
-		}
-
-		// Print QR code for pairing with phone
-		for evt := range qrChan {
-			if evt.Event == "code" {
-				fmt.Println("\nScan this QR code with your WhatsApp app:")
-				qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
-			} else if evt.Event == "success" {
-				connected <- true
-				break
-			}
-		}
-
-		// Wait for connection
-		select {
-		case <-connected:
-			fmt.Println("\nSuccessfully connected and authenticated!")
-		case <-time.After(3 * time.Minute):
-			logger.Errorf("Timeout waiting for QR code scan")
-			return
-		}
-	} else {
-		// Already logged in, just connect
-		err = client.Connect()
-		if err != nil {
-			logger.Errorf("Failed to connect: %v", err)
-			return
-		}
-		connected <- true
-	}
-
-	// Wait a moment for connection to stabilize
-	time.Sleep(2 * time.Second)
-
-	if !client.IsConnected() {
-		logger.Errorf("Failed to establish stable connection")
-		return
-	}
-
-	fmt.Println("\n✓ Connected to WhatsApp! Type 'help' for commands.")
+	// Do not connect or generate QR here.
+	// Only start the REST server.
 
 	// Start REST API server
 	startRESTServer(client, messageStore, 8080)
