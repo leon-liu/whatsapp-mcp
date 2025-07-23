@@ -983,9 +983,6 @@ func main() {
 		}
 	})
 
-	// Create channel to track connection success
-	connected := make(chan bool, 1)
-
 	// Do not connect or generate QR here.
 	// Only start the REST server.
 
