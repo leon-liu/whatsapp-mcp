@@ -332,7 +332,7 @@ def get_message_context(
             conn.close()
 
 
-def list_chats(
+def list_chats(user_id: str,
     query: Optional[str] = None,
     limit: int = 20,
     page: int = 0,
@@ -341,7 +341,8 @@ def list_chats(
 ) -> List[Chat]:
     """Get chats matching the specified criteria."""
     try:
-        conn = sqlite3.connect(MESSAGES_DB_PATH)
+        db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../whatsapp-bridge/store", user_id, "messages.db"))
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
         # Build base query
@@ -448,7 +449,7 @@ def search_contacts(query: str) -> List[Contact]:
             conn.close()
 
 
-def get_contact_chats(jid: str, limit: int = 20, page: int = 0) -> List[Chat]:
+def get_contact_chats(user_id: str, jid: str, limit: int = 20, page: int = 0) -> List[Chat]:
     """Get all chats involving the contact.
     
     Args:
@@ -457,7 +458,8 @@ def get_contact_chats(jid: str, limit: int = 20, page: int = 0) -> List[Chat]:
         page: Page number for pagination (default 0)
     """
     try:
-        conn = sqlite3.connect(MESSAGES_DB_PATH)
+        db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../whatsapp-bridge/store", user_id, "messages.db"))
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
         cursor.execute("""
@@ -499,10 +501,11 @@ def get_contact_chats(jid: str, limit: int = 20, page: int = 0) -> List[Chat]:
             conn.close()
 
 
-def get_last_interaction(jid: str) -> str:
+def get_last_interaction(user_id: str, jid: str) -> str:
     """Get most recent message involving the contact."""
     try:
-        conn = sqlite3.connect(MESSAGES_DB_PATH)
+        db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../whatsapp-bridge/store", user_id, "messages.db"))
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
         cursor.execute("""
@@ -548,10 +551,11 @@ def get_last_interaction(jid: str) -> str:
             conn.close()
 
 
-def get_chat(chat_jid: str, include_last_message: bool = True) -> Optional[Chat]:
+def get_chat(user_id: str, chat_jid: str, include_last_message: bool = True) -> Optional[Chat]:
     """Get chat metadata by JID."""
     try:
-        conn = sqlite3.connect(MESSAGES_DB_PATH)
+        db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../whatsapp-bridge/store", user_id, "messages.db"))
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
         query = """
@@ -596,10 +600,11 @@ def get_chat(chat_jid: str, include_last_message: bool = True) -> Optional[Chat]
             conn.close()
 
 
-def get_direct_chat_by_contact(sender_phone_number: str) -> Optional[Chat]:
+def get_direct_chat_by_contact(user_id: str, sender_phone_number: str) -> Optional[Chat]:
     """Get chat metadata by sender phone number."""
     try:
-        conn = sqlite3.connect(MESSAGES_DB_PATH)
+        db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../whatsapp-bridge/store", user_id, "messages.db"))
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
         cursor.execute("""
@@ -769,7 +774,7 @@ def send_audio_message(recipient: str, media_path: str, user_id: str = None) -> 
         return False, f"Error: HTTP {response.status_code} - {response.text}"
 
 
-def download_media(message_id: str, chat_jid: str, user_id: str = None) -> str:
+def download_media(user_id: str, message_id: str, chat_jid: str) -> str:
     if user_id is None:
         user_id = get_or_create_user_id()
     url = f"{WHATSAPP_API_BASE_URL}/download?user_id={user_id}"

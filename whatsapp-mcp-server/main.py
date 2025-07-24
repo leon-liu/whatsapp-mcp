@@ -74,15 +74,17 @@ def list_messages(
 
 @mcp.tool()
 def list_chats(
+    user_id: str,
     query: Optional[str] = None,
     limit: int = 20,
     page: int = 0,
     include_last_message: bool = True,
     sort_by: str = "last_active"
 ) -> List[Dict[str, Any]]:
-    """Get WhatsApp chats matching specified criteria.
+    """Get WhatsApp chats matching specified criteria for a specific user.
     
     Args:
+        user_id: The user ID whose chats to list
         query: Optional search term to filter chats by name or JID
         limit: Maximum number of chats to return (default 20)
         page: Page number for pagination (default 0)
@@ -90,6 +92,7 @@ def list_chats(
         sort_by: Field to sort results by, either "last_active" or "name" (default "last_active")
     """
     chats = whatsapp_list_chats(
+        user_id=user_id,
         query=query,
         limit=limit,
         page=page,
@@ -99,46 +102,50 @@ def list_chats(
     return chats
 
 @mcp.tool()
-def get_chat(chat_jid: str, include_last_message: bool = True) -> Dict[str, Any]:
-    """Get WhatsApp chat metadata by JID.
+def get_chat(user_id: str, chat_jid: str, include_last_message: bool = True) -> Dict[str, Any]:
+    """Get WhatsApp chat metadata by JID for a specific user.
     
     Args:
+        user_id: The user ID whose chat to get
         chat_jid: The JID of the chat to retrieve
         include_last_message: Whether to include the last message (default True)
     """
-    chat = whatsapp_get_chat(chat_jid, include_last_message)
+    chat = whatsapp_get_chat(user_id, chat_jid, include_last_message)
     return chat
 
 @mcp.tool()
-def get_direct_chat_by_contact(sender_phone_number: str) -> Dict[str, Any]:
-    """Get WhatsApp chat metadata by sender phone number.
+def get_direct_chat_by_contact(user_id: str, sender_phone_number: str) -> Dict[str, Any]:
+    """Get WhatsApp chat metadata by sender phone number for a specific user.
     
     Args:
+        user_id: The user ID whose chat to get
         sender_phone_number: The phone number to search for
     """
-    chat = whatsapp_get_direct_chat_by_contact(sender_phone_number)
+    chat = whatsapp_get_direct_chat_by_contact(user_id, sender_phone_number)
     return chat
 
 @mcp.tool()
-def get_contact_chats(jid: str, limit: int = 20, page: int = 0) -> List[Dict[str, Any]]:
-    """Get all WhatsApp chats involving the contact.
+def get_contact_chats(user_id: str, jid: str, limit: int = 20, page: int = 0) -> List[Dict[str, Any]]:
+    """Get all WhatsApp chats involving the contact for a specific user.
     
     Args:
+        user_id: The user ID whose chats to get
         jid: The contact's JID to search for
         limit: Maximum number of chats to return (default 20)
         page: Page number for pagination (default 0)
     """
-    chats = whatsapp_get_contact_chats(jid, limit, page)
+    chats = whatsapp_get_contact_chats(user_id, jid, limit, page)
     return chats
 
 @mcp.tool()
-def get_last_interaction(jid: str) -> str:
-    """Get most recent WhatsApp message involving the contact.
+def get_last_interaction(user_id: str, jid: str) -> str:
+    """Get most recent WhatsApp message involving the contact for a specific user.
     
     Args:
+        user_id: The user ID whose interaction to get
         jid: The JID of the contact to search for
     """
-    message = whatsapp_get_last_interaction(jid)
+    message = whatsapp_get_last_interaction(user_id, jid)
     return message
 
 @mcp.tool()
@@ -372,7 +379,7 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description='WhatsApp MCP Server')
-    parser.add_argument('--transport', choices=['stdio', 'sse'], default='sse', 
+    parser.add_argument('--transport', choices=['stdio', 'sse'], default='stdio', 
                        help='Transport method (default: sse)')
     
     args = parser.parse_args()

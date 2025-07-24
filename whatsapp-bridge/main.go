@@ -49,14 +49,15 @@ type MessageStore struct {
 }
 
 // Initialize message store
-func NewMessageStore() (*MessageStore, error) {
+func NewMessageStore(userID string) (*MessageStore, error) {
 	// Create directory for database if it doesn't exist
 	if err := os.MkdirAll("store", 0755); err != nil {
 		return nil, fmt.Errorf("failed to create store directory: %v", err)
 	}
 
 	// Open SQLite database for messages
-	db, err := sql.Open("sqlite3", "file:store/messages.db?_foreign_keys=on")
+	dbPath := fmt.Sprintf("store/%s/messages.db", userID)
+	db, err := sql.Open("sqlite3", "file:"+dbPath+"?_foreign_keys=on")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open message database: %v", err)
 	}
@@ -643,7 +644,7 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 	}
 
 	// Download the media using whatsmeow client
-	mediaData, err := client.Download(downloader)
+	mediaData, err := client.Download(context.Background(), downloader)
 	if err != nil {
 		return false, "", "", "", fmt.Errorf("failed to download media: %v", err)
 	}
@@ -699,23 +700,48 @@ func getClientForUser(userID string, logger waLog.Logger) (*whatsmeow.Client, er
 	dbLog := waLog.Stdout("Database", "INFO", true)
 	dbPath := fmt.Sprintf("store/%s/whatsapp.db", userID)
 	os.MkdirAll(fmt.Sprintf("store/%s", userID), 0755)
-	container, err := sqlstore.New("sqlite3", "file:"+dbPath+"?_foreign_keys=on", dbLog)
+	container, err := sqlstore.New(context.Background(), "sqlite3", "file:"+dbPath+"?_foreign_keys=on", dbLog)
 	if err != nil {
 		return nil, err
 	}
-	deviceStore, err := container.GetFirstDevice()
+	deviceStore, err := container.GetFirstDevice(context.Background())
 	if err == sql.ErrNoRows {
 		deviceStore = container.NewDevice()
 	} else if err != nil {
 		return nil, err
 	}
 	client := whatsmeow.NewClient(deviceStore, logger)
+
+	// Register event handler for this user
+	client.AddEventHandler(func(evt interface{}) {
+		switch v := evt.(type) {
+		case *events.Message:
+			messageStore, err := getMessageStoreForUser(userID)
+			if err != nil {
+				logger.Warnf("Failed to get message store: %v", err)
+				return
+			}
+			handleMessage(client, messageStore, v, logger)
+		case *events.HistorySync:
+			messageStore, err := getMessageStoreForUser(userID)
+			if err != nil {
+				logger.Warnf("Failed to get message store: %v", err)
+				return
+			}
+			handleHistorySync(client, messageStore, v, logger)
+		case *events.Connected:
+			logger.Infof("User %s connected to WhatsApp", userID)
+		case *events.LoggedOut:
+			logger.Warnf("User %s logged out, please scan QR code to log in again", userID)
+		}
+	})
+
 	clients[userID] = client
 	return client, nil
 }
 
 // Start a REST API server to expose the WhatsApp client functionality
-func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port int) {
+func startRESTServer(port int) {
 	// QR code endpoint
 	http.HandleFunc("/api/qr", func(w http.ResponseWriter, r *http.Request) {
 		userID := r.URL.Query().Get("user_id")
@@ -747,11 +773,14 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 					png, _ := qrcode.Encode(evt.Code, qrcode.Medium, 256)
 					qrCodes[userID] = png
 					loginStatus[userID] = "pending"
+					fmt.Printf("QR code generated for user %s\n", userID)
 				} else if evt.Event == "success" {
 					loginStatus[userID] = "success"
+					fmt.Printf("User %s logged in successfully\n", userID)
 					break
 				} else if evt.Event == "timeout" || evt.Event == "error" {
 					loginStatus[userID] = "failed"
+					fmt.Printf("User %s login failed or timed out\n", userID)
 					break
 				}
 			}
@@ -780,9 +809,51 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 			http.Error(w, "user_id required", http.StatusBadRequest)
 			return
 		}
-		status := loginStatus[userID]
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": status})
+
+		logger := waLog.Stdout("Client", "INFO", true)
+		client, err := getClientForUser(userID, logger)
+		if err != nil {
+			http.Error(w, "Failed to get client: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Check if user has a valid session stored
+		if client.Store.ID == nil {
+			// No session stored, check in-memory status
+			status, ok := loginStatus[userID]
+			if !ok {
+				status = "not_started"
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"status": status})
+			fmt.Printf("Login status for user %s: %s (no session)\n", userID, status)
+			return
+		}
+
+		// User has a session stored, check connection status
+		if client.IsConnected() {
+			status := "success"
+			loginStatus[userID] = status // Update in-memory status
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"status": status})
+			fmt.Printf("Login status for user %s: %s (connected)\n", userID, status)
+		} else {
+			// Try to connect to check if session is still valid
+			err = client.Connect()
+			if err != nil {
+				status := "failed"
+				loginStatus[userID] = status
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]string{"status": status})
+				fmt.Printf("Login status for user %s: %s (connection failed: %v)\n", userID, status, err)
+			} else {
+				status := "success"
+				loginStatus[userID] = status
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]string{"status": status})
+				fmt.Printf("Login status for user %s: %s (reconnected)\n", userID, status)
+			}
+		}
 	})
 
 	// Handler for sending messages (updated for user_id)
@@ -822,11 +893,11 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 			return
 		}
 
-		fmt.Println("Received request to send message", req.Message, req.MediaPath)
+		fmt.Printf("Received request to send message for user %s: %s, %s\n", userID, req.Message, req.MediaPath)
 
 		// Send the message
 		success, message := sendWhatsAppMessage(client, req.Recipient, req.Message, req.MediaPath)
-		fmt.Println("Message sent", success, message)
+		fmt.Printf("Message sent for user %s: %t, %s\n", userID, success, message)
 		// Set response headers
 		w.Header().Set("Content-Type", "application/json")
 
@@ -871,6 +942,12 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 		// Validate request
 		if req.MessageID == "" || req.ChatJID == "" {
 			http.Error(w, "Message ID and Chat JID are required", http.StatusBadRequest)
+			return
+		}
+
+		messageStore, err := getMessageStoreForUser(userID)
+		if err != nil {
+			http.Error(w, "Failed to get message store: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
@@ -921,73 +998,17 @@ func main() {
 	logger := waLog.Stdout("Client", "INFO", true)
 	logger.Infof("Starting WhatsApp client...")
 
-	// Create database connection for storing session data
-	dbLog := waLog.Stdout("Database", "INFO", true)
-
 	// Create directory for database if it doesn't exist
 	if err := os.MkdirAll("store", 0755); err != nil {
 		logger.Errorf("Failed to create store directory: %v", err)
 		return
 	}
 
-	container, err := sqlstore.New("sqlite3", "file:store/whatsapp.db?_foreign_keys=on", dbLog)
-	if err != nil {
-		logger.Errorf("Failed to connect to database: %v", err)
-		return
-	}
+	// Do not create any WhatsApp client or session in `main()`
+	// All client/session creation should be handled per-user in `getClientForUser`.
 
-	// Get device store - This contains session information
-	deviceStore, err := container.GetFirstDevice()
-	if err != nil {
-		if err == sql.ErrNoRows {
-			// No device exists, create one
-			deviceStore = container.NewDevice()
-			logger.Infof("Created new device")
-		} else {
-			logger.Errorf("Failed to get device: %v", err)
-			return
-		}
-	}
-
-	// Create client instance
-	client := whatsmeow.NewClient(deviceStore, logger)
-	if client == nil {
-		logger.Errorf("Failed to create WhatsApp client")
-		return
-	}
-
-	// Initialize message store
-	messageStore, err := NewMessageStore()
-	if err != nil {
-		logger.Errorf("Failed to initialize message store: %v", err)
-		return
-	}
-	defer messageStore.Close()
-
-	// Setup event handling for messages and history sync
-	client.AddEventHandler(func(evt interface{}) {
-		switch v := evt.(type) {
-		case *events.Message:
-			// Process regular messages
-			handleMessage(client, messageStore, v, logger)
-
-		case *events.HistorySync:
-			// Process history sync events
-			handleHistorySync(client, messageStore, v, logger)
-
-		case *events.Connected:
-			logger.Infof("Connected to WhatsApp")
-
-		case *events.LoggedOut:
-			logger.Warnf("Device logged out, please scan QR code to log in again")
-		}
-	})
-
-	// Do not connect or generate QR here.
-	// Only start the REST server.
-
-	// Start REST API server
-	startRESTServer(client, messageStore, 8080)
+	// Start only the REST API server in `main()`
+	startRESTServer(8080)
 
 	// Create a channel to keep the main goroutine alive
 	exitChan := make(chan os.Signal, 1)
@@ -1000,7 +1021,8 @@ func main() {
 
 	fmt.Println("Disconnecting...")
 	// Disconnect client
-	client.Disconnect()
+	// The client is managed per-user, so we don't disconnect it here directly.
+	// The REST server will handle its lifecycle.
 }
 
 // GetChatName determines the appropriate name for a chat based on JID and other info
@@ -1069,7 +1091,7 @@ func GetChatName(client *whatsmeow.Client, messageStore *MessageStore, jid types
 		logger.Infof("Getting name for contact: %s", chatJID)
 
 		// Just use contact info (full name)
-		contact, err := client.Store.Contacts.GetContact(jid)
+		contact, err := client.Store.Contacts.GetContact(context.Background(), jid)
 		if err == nil && contact.FullName != "" {
 			name = contact.FullName
 		} else if sender != "" {
@@ -1426,4 +1448,27 @@ func placeholderWaveform(duration uint32) []byte {
 	}
 
 	return waveform
+}
+
+var messageStores = make(map[string]*MessageStore)
+var messageStoreLocks = make(map[string]*sync.Mutex)
+
+func getMessageStoreForUser(userID string) (*MessageStore, error) {
+	lock, ok := messageStoreLocks[userID]
+	if !ok {
+		lock = &sync.Mutex{}
+		messageStoreLocks[userID] = lock
+	}
+	lock.Lock()
+	defer lock.Unlock()
+
+	if store, ok := messageStores[userID]; ok {
+		return store, nil
+	}
+	store, err := NewMessageStore(userID)
+	if err != nil {
+		return nil, err
+	}
+	messageStores[userID] = store
+	return store, nil
 }
