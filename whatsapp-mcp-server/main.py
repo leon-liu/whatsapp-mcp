@@ -1,5 +1,5 @@
 from typing import List, Dict, Any, Optional
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 from whatsapp import (
     search_contacts as whatsapp_search_contacts,
     list_messages as whatsapp_list_messages,
@@ -379,7 +379,7 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description='WhatsApp MCP Server')
-    parser.add_argument('--transport', choices=['stdio', 'sse'], default='stdio', 
+    parser.add_argument('--transport', choices=['stdio', 'sse'], default='sse', 
                        help='Transport method (default: sse)')
     
     args = parser.parse_args()
@@ -387,7 +387,8 @@ if __name__ == "__main__":
     if args.transport == 'sse':
         print("Starting WhatsApp MCP Server with SSE transport")
         print("Note: SSE transport uses default FastMCP settings")
-        mcp.run(transport='sse')
+        mcp.run(transport='sse', host="0.0.0.0", port=8000)
+        #mcp.run(transport='sse')
     else:
         print("Starting WhatsApp MCP Server with stdio transport")
         mcp.run(transport='stdio')
