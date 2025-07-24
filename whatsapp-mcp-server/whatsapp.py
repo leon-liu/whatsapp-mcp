@@ -342,6 +342,8 @@ def list_chats(user_id: str,
     """Get chats matching the specified criteria."""
     try:
         db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../whatsapp-bridge/store", user_id, "messages.db"))
+        print("DB path:", db_path)
+        print("CWD:", os.getcwd())
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
@@ -459,6 +461,8 @@ def get_contact_chats(user_id: str, jid: str, limit: int = 20, page: int = 0) ->
     """
     try:
         db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../whatsapp-bridge/store", user_id, "messages.db"))
+        print("DB path:", db_path)
+        print("CWD:", os.getcwd())
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
@@ -505,6 +509,8 @@ def get_last_interaction(user_id: str, jid: str) -> str:
     """Get most recent message involving the contact."""
     try:
         db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../whatsapp-bridge/store", user_id, "messages.db"))
+        print("DB path:", db_path)
+        print("CWD:", os.getcwd())
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
@@ -555,6 +561,8 @@ def get_chat(user_id: str, chat_jid: str, include_last_message: bool = True) -> 
     """Get chat metadata by JID."""
     try:
         db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../whatsapp-bridge/store", user_id, "messages.db"))
+        print("DB path:", db_path)
+        print("CWD:", os.getcwd())
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
@@ -604,6 +612,8 @@ def get_direct_chat_by_contact(user_id: str, sender_phone_number: str) -> Option
     """Get chat metadata by sender phone number."""
     try:
         db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../whatsapp-bridge/store", user_id, "messages.db"))
+        print("DB path:", db_path)
+        print("CWD:", os.getcwd())
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
