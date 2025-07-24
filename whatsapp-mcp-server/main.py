@@ -375,19 +375,19 @@ def get_login_status(user_id: str) -> Dict[str, Any]:
         }
 
 if __name__ == "__main__":
+    # Initialize and run the server with SSE transport
     import argparse
-
+    
     parser = argparse.ArgumentParser(description='WhatsApp MCP Server')
-    parser.add_argument('--transport', choices=['stdio', 'sse'], default='stdio', help='Transport method (default: sse)')
-    parser.add_argument('--host', default='0.0.0.0', help='Host to bind (default: 0.0.0.0)')
-    parser.add_argument('--port', type=int, default=8000, help='Port to bind (default: 8000)')
-
+    parser.add_argument('--transport', choices=['stdio', 'sse'], default='stdio', 
+                       help='Transport method (default: sse)')
+    
     args = parser.parse_args()
-
+    
     if args.transport == 'sse':
         print("Starting WhatsApp MCP Server with SSE transport")
         print("Note: SSE transport uses default FastMCP settings")
-        mcp.run(transport='sse', host=args.host, port=args.port)
+        mcp.run(transport='sse')
     else:
         print("Starting WhatsApp MCP Server with stdio transport")
         mcp.run(transport='stdio')
