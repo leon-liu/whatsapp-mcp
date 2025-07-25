@@ -1,9 +1,24 @@
 from fastapi import FastAPI, Query, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 from pydantic import BaseModel
 from whatsapp import list_chats, Chat
 
 app = FastAPI()
+
+# Add CORS middleware
+origins = [
+    "http://localhost:8080",
+    "https://preview--know-chat-hive.lovable.app/"
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class ChatModel(BaseModel):
     jid: str
