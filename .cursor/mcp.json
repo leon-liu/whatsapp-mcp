@@ -2,6 +2,9 @@
   "mcpServers": {
     "whatsapp": {
       "url": "http://3.255.211.78:8000/sse"
+    },
+    "playwright": {
+      "url": "http://3.255.211.78:8931/sse"
     }
   }
 }
