@@ -6,6 +6,8 @@ ubuntu@ip-172-31-11-224:~/whatsapp-mcp/whatsapp-bridge$ nohup /usr/local/go/bin/
 Python 3.12.3
 (venv) ubuntu@ip-172-31-11-224:~/whatsapp-mcp/whatsapp-mcp-server$ uv run python main.py --transport sse
 
+Python 3.12.2
+uvicorn app:app --reload --host 0.0.0.0 --port 8081
 
 {
     "mcpServers": {

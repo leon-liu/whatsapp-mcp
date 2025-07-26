@@ -51,8 +51,7 @@ def list_chats(
 
         if include_last_message:
             query_parts.append("""
-                LEFT JOIN messages ON chats.jid = messages.chat_jid 
-                AND chats.last_message_time = messages.timestamp
+                LEFT JOIN messages ON chats.jid = messages.chat_jid
             """)
 
         where_clauses = []

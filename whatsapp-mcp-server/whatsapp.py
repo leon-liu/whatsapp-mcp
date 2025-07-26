@@ -182,8 +182,11 @@ def list_messages(
         if sender_phone_number:
             where_clauses.append("messages.sender = ?")
             params.append(sender_phone_number)
-            
+        print(chat_jid)
         if chat_jid:
+            # Ensure chat_jid has the proper suffix
+            if not chat_jid.endswith("@s.whatsapp.net") and not chat_jid.endswith("@g.us"):
+                chat_jid = chat_jid + "@s.whatsapp.net"
             where_clauses.append("messages.chat_jid = ?")
             params.append(chat_jid)
             
@@ -560,6 +563,10 @@ def get_last_interaction(user_id: str, jid: str) -> str:
 def get_chat(user_id: str, chat_jid: str, include_last_message: bool = True) -> Optional[Chat]:
     """Get chat metadata by JID."""
     try:
+        # Ensure chat_jid has the proper suffix
+        if not chat_jid.endswith("@s.whatsapp.net") and not chat_jid.endswith("@g.us"):
+            chat_jid = chat_jid + "@s.whatsapp.net"
+            
         db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../whatsapp-bridge/store", user_id, "messages.db"))
         print("DB path:", db_path)
         print("CWD:", os.getcwd())
@@ -652,6 +659,61 @@ def get_direct_chat_by_contact(user_id: str, sender_phone_number: str) -> Option
     finally:
         if 'conn' in locals():
             conn.close()
+
+def get_login_status(user_id: str = None) -> dict:
+    """Check the login status for a specific user."""
+    if user_id is None:
+        user_id = get_or_create_user_id()
+    
+    status_url = f"{WHATSAPP_API_BASE_URL}/login_status?user_id={user_id}"
+    try:
+        resp = requests.get(status_url, timeout=5)
+        if resp.status_code == 200:
+            status_data = resp.json()
+            status = status_data.get("status", "unknown")
+            
+            if status == "success":
+                return {
+                    "success": True,
+                    "status": "success",
+                    "user_id": user_id,
+                    "message": "Login successful! You can now use WhatsApp features."
+                }
+            elif status == "failed":
+                return {
+                    "success": False,
+                    "status": "failed",
+                    "user_id": user_id,
+                    "message": "Login failed. Please try again."
+                }
+            elif status == "pending":
+                return {
+                    "success": False,
+                    "status": "pending",
+                    "user_id": user_id,
+                    "message": "Waiting for QR code scan. Please scan the QR code with WhatsApp."
+                }
+            else:
+                return {
+                    "success": False,
+                    "status": "unknown",
+                    "user_id": user_id,
+                    "message": f"Unknown login status: {status}"
+                }
+        else:
+            return {
+                "success": False,
+                "status": "error",
+                "user_id": user_id,
+                "message": f"Error checking login status: HTTP {resp.status_code}"
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "status": "error",
+            "user_id": user_id,
+            "message": f"Error checking login status: {str(e)}"
+        }
 
 def get_qr_code(user_id: str = None) -> dict:
     """Get QR code for WhatsApp login without polling for status."""
@@ -787,6 +849,11 @@ def send_audio_message(recipient: str, media_path: str, user_id: str = None) -> 
 def download_media(user_id: str, message_id: str, chat_jid: str) -> str:
     if user_id is None:
         user_id = get_or_create_user_id()
+    
+    # Ensure chat_jid has the proper suffix
+    if not chat_jid.endswith("@s.whatsapp.net") and not chat_jid.endswith("@g.us"):
+        chat_jid = chat_jid + "@s.whatsapp.net"
+    
     url = f"{WHATSAPP_API_BASE_URL}/download?user_id={user_id}"
     payload = {
         "message_id": message_id,
