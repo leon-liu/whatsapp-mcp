@@ -117,7 +117,7 @@ func (store *MessageStore) StoreMessage(id, chatJID, sender, content string, tim
 	if content == "" && mediaType == "" {
 		return nil
 	}
-//3A129E01DA41A393A833|19714594907@s.whatsapp.net|19714594907|good|2025-07-28 15:47:20+00:00|1|||||||0
+	//3A129E01DA41A393A833|19714594907@s.whatsapp.net|19714594907|good|2025-07-28 15:47:20+00:00|1|||||||0
 	_, err := store.db.Exec(
 		`INSERT OR REPLACE INTO messages 
 		(id, chat_jid, sender, content, timestamp, is_from_me, media_type, filename, url, media_key, file_sha256, file_enc_sha256, file_length) 
@@ -557,7 +557,7 @@ func (d *MediaDownloader) GetMediaType() whatsmeow.MediaType {
 }
 
 // Function to download media from a message
-func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, messageID, chatJID string) (bool, string, string, string, error) {
+func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, messageID, chatJID, userID string) (bool, string, string, string, error) {
 	// Query the database for the message
 	var mediaType, filename, url string
 	var mediaKey, fileSHA256, fileEncSHA256 []byte
@@ -565,12 +565,8 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 	var err error
 
 	// First, check if we already have this file
-	chatDir := fmt.Sprintf("store/%s", strings.ReplaceAll(chatJID, ":", "_"))
+	chatDir := fmt.Sprintf("store/%s/%s", userID, strings.ReplaceAll(chatJID, ":", "_"))
 	localPath := ""
-
-	if !strings.HasSuffix(chatJID, "@s.whatsapp.net") && !strings.HasSuffix(chatJID, "@g.us") {
-		chatJID = chatJID + "@s.whatsapp.net"
-	}
 
 	// Get media info from the database
 	mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength, err = messageStore.GetMediaInfo(messageID, chatJID)
@@ -956,7 +952,7 @@ func startRESTServer(port int) {
 		}
 
 		// Download the media
-		success, mediaType, filename, path, err := downloadMedia(client, messageStore, req.MessageID, req.ChatJID)
+		success, mediaType, filename, path, err := downloadMedia(client, messageStore, req.MessageID, req.ChatJID, userID)
 
 		// Set response headers
 		w.Header().Set("Content-Type", "application/json")
