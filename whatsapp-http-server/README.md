@@ -14,9 +14,9 @@ This project exposes a RESTful API to access WhatsApp chat data using the `list_
    uvicorn app:app --reload
    ```
 
-   To specify a custom host and port (e.g., host 0.0.0.0 and port 8081):
+   To specify a custom host and port (e.g., host 0.0.0.0 and port 8040):
    ```bash
-   uvicorn app:app --reload --host 0.0.0.0 --port 8081
+   uvicorn app:app --reload --host 0.0.0.0 --port 8040
    ```
 
 ## API

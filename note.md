@@ -1,13 +1,20 @@
-ssh -i "~/Downloads/aidirectorycrawler.pem" ubuntu@ec2-3-255-211-78.eu-west-1.compute.amazonaws.com
+ssh -i "~/Downloads/aidirectorycrawler.pem" ubuntu@ec2-99-80-21-173.eu-west-1.compute.amazonaws.com
 
+
+whatsapp-bridge
 go version go1.24.4 linux/amd64
 ubuntu@ip-172-31-11-224:~/whatsapp-mcp/whatsapp-bridge$ nohup /usr/local/go/bin/go run main.go &
 
-Python 3.12.3
-(venv) ubuntu@ip-172-31-11-224:~/whatsapp-mcp/whatsapp-mcp-server$ uv run python main.py --transport sse
 
+whatspp-mcp-server
+Python 3.12.3
+(venv) ubuntu@ip-172-31-11-224:~/whatsapp-mcp/whatsapp-mcp-server$ nohup uv run python main.py --transport sse &
+
+
+whatspp-http-server
 Python 3.12.2
-uvicorn app:app --reload --host 0.0.0.0 --port 8081
+pip install fastapi uvicorn
+nohup uvicorn app:app --reload --host 0.0.0.0 --port 8040 &
 
 {
     "mcpServers": {

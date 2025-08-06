@@ -117,7 +117,7 @@ func (store *MessageStore) StoreMessage(id, chatJID, sender, content string, tim
 	if content == "" && mediaType == "" {
 		return nil
 	}
-
+//3A129E01DA41A393A833|19714594907@s.whatsapp.net|19714594907|good|2025-07-28 15:47:20+00:00|1|||||||0
 	_, err := store.db.Exec(
 		`INSERT OR REPLACE INTO messages 
 		(id, chat_jid, sender, content, timestamp, is_from_me, media_type, filename, url, media_key, file_sha256, file_enc_sha256, file_length) 
