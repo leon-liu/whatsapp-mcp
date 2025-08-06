@@ -31,7 +31,7 @@ def search_contacts(query: str, user_id: Optional[str] = None) -> List[Dict[str,
         user_id: Optional user ID to specify which database to use
     """
     contacts = whatsapp_search_contacts(query, user_id)
-    return contacts
+    return [contact.to_dict() for contact in contacts]
 
 @mcp.tool()
 def list_messages(
@@ -75,7 +75,7 @@ def list_messages(
         context_before=context_before,
         context_after=context_after
     )
-    return messages
+    return [message.to_dict() for message in messages]
 
 @mcp.tool()
 def list_chats(
@@ -104,7 +104,7 @@ def list_chats(
         include_last_message=include_last_message,
         sort_by=sort_by
     )
-    return chats
+    return [chat.to_dict() for chat in chats]
 
 @mcp.tool()
 def get_chat(user_id: str, chat_jid: str, include_last_message: bool = True) -> Dict[str, Any]:
@@ -116,7 +116,7 @@ def get_chat(user_id: str, chat_jid: str, include_last_message: bool = True) -> 
         include_last_message: Whether to include the last message (default True)
     """
     chat = whatsapp_get_chat(user_id, chat_jid, include_last_message)
-    return chat
+    return chat.to_dict() if chat else None
 
 @mcp.tool()
 def get_direct_chat_by_contact(user_id: str, sender_phone_number: str) -> Dict[str, Any]:
@@ -127,7 +127,7 @@ def get_direct_chat_by_contact(user_id: str, sender_phone_number: str) -> Dict[s
         sender_phone_number: The phone number to search for
     """
     chat = whatsapp_get_direct_chat_by_contact(user_id, sender_phone_number)
-    return chat
+    return chat.to_dict() if chat else None
 
 @mcp.tool()
 def get_contact_chats(user_id: str, jid: str, limit: int = 20, page: int = 0) -> List[Dict[str, Any]]:
@@ -140,7 +140,7 @@ def get_contact_chats(user_id: str, jid: str, limit: int = 20, page: int = 0) ->
         page: Page number for pagination (default 0)
     """
     chats = whatsapp_get_contact_chats(user_id, jid, limit, page)
-    return chats
+    return [chat.to_dict() for chat in chats]
 
 @mcp.tool()
 def get_last_interaction(user_id: str, jid: str) -> str:
@@ -169,7 +169,7 @@ def get_message_context(
         user_id: Optional user ID to specify which database to use
     """
     context = whatsapp_get_message_context(message_id, before, after, user_id)
-    return context
+    return context.to_dict() if context else None
 
 @mcp.tool()
 def send_message(

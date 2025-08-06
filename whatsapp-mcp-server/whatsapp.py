@@ -1,7 +1,7 @@
 import sqlite3
 from datetime import datetime
 from dataclasses import dataclass
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict, Any
 import os.path
 import requests
 import json
@@ -37,6 +37,18 @@ class Message:
     chat_name: Optional[str] = None
     media_type: Optional[str] = None
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+            'sender': self.sender,
+            'content': self.content,
+            'is_from_me': self.is_from_me,
+            'chat_jid': self.chat_jid,
+            'id': self.id,
+            'chat_name': self.chat_name,
+            'media_type': self.media_type
+        }
+
 @dataclass
 class Chat:
     jid: str
@@ -51,17 +63,42 @@ class Chat:
         """Determine if chat is a group based on JID pattern."""
         return self.jid.endswith("@g.us")
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'jid': self.jid,
+            'name': self.name,
+            'last_message_time': self.last_message_time.isoformat() if self.last_message_time else None,
+            'last_message': self.last_message,
+            'last_sender': self.last_sender,
+            'last_is_from_me': self.last_is_from_me,
+            'is_group': self.is_group
+        }
+
 @dataclass
 class Contact:
     phone_number: str
     name: Optional[str]
     jid: str
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'phone_number': self.phone_number,
+            'name': self.name,
+            'jid': self.jid
+        }
+
 @dataclass
 class MessageContext:
     message: Message
     before: List[Message]
     after: List[Message]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'message': self.message.to_dict(),
+            'before': [msg.to_dict() for msg in self.before],
+            'after': [msg.to_dict() for msg in self.after]
+        }
 
 def git(sender_jid: str, user_id: Optional[str] = None) -> str:
     try:
@@ -111,7 +148,7 @@ def git(sender_jid: str, user_id: Optional[str] = None) -> str:
         if 'conn' in locals():
             conn.close()
 
-def format_message(message: Message, show_chat_info: bool = True, user_id: Optional[str] = None) -> None:
+def format_message(message: Message, show_chat_info: bool = True, user_id: Optional[str] = None) -> str:
     """Print a single message with consistent formatting."""
     output = ""
     
@@ -129,16 +166,6 @@ def format_message(message: Message, show_chat_info: bool = True, user_id: Optio
         output += f"From: {sender_name}: {content_prefix}{message.content}\n"
     except Exception as e:
         print(f"Error formatting message: {e}")
-    return output
-
-def format_messages_list(messages: List[Message], show_chat_info: bool = True, user_id: Optional[str] = None) -> None:
-    output = ""
-    if not messages:
-        output += "No messages to display."
-        return output
-    
-    for message in messages:
-        output += format_message(message, show_chat_info, user_id)
     return output
 
 def list_messages(
@@ -235,10 +262,10 @@ def list_messages(
                 messages_with_context.append(context.message)
                 messages_with_context.extend(context.after)
             
-            return format_messages_list(messages_with_context, show_chat_info=True, user_id=user_id)
+            return messages_with_context
             
-        # Format and display messages without context
-        return format_messages_list(result, show_chat_info=True, user_id=user_id)    
+        # Return messages without context
+        return result
         
     except sqlite3.Error as e:
         print(f"Database error: {e}")
