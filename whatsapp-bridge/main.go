@@ -568,6 +568,10 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 	chatDir := fmt.Sprintf("store/%s", strings.ReplaceAll(chatJID, ":", "_"))
 	localPath := ""
 
+	if !strings.HasSuffix(chatJID, "@s.whatsapp.net") && !strings.HasSuffix(chatJID, "@g.us") {
+		chatJID = chatJID + "@s.whatsapp.net"
+	}
+
 	// Get media info from the database
 	mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength, err = messageStore.GetMediaInfo(messageID, chatJID)
 
