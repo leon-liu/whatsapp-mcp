@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -485,6 +486,7 @@ type DownloadMediaResponse struct {
 	Message  string `json:"message"`
 	Filename string `json:"filename,omitempty"`
 	Path     string `json:"path,omitempty"`
+	File     string `json:"file,omitempty"`
 }
 
 // Store additional media info in the database
@@ -557,7 +559,7 @@ func (d *MediaDownloader) GetMediaType() whatsmeow.MediaType {
 }
 
 // Function to download media from a message
-func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, messageID, chatJID, userID string) (bool, string, string, string, error) {
+func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, messageID, chatJID, userID string) (bool, string, string, string, string, error) {
 	// Query the database for the message
 	var mediaType, filename, url string
 	var mediaKey, fileSHA256, fileEncSHA256 []byte
@@ -579,18 +581,18 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 		).Scan(&mediaType, &filename)
 
 		if err != nil {
-			return false, "", "", "", fmt.Errorf("failed to find message: %v", err)
+			return false, "", "", "", "", fmt.Errorf("failed to find message: %v", err)
 		}
 	}
 
 	// Check if this is a media message
 	if mediaType == "" {
-		return false, "", "", "", fmt.Errorf("not a media message")
+		return false, "", "", "", "", fmt.Errorf("not a media message")
 	}
 
 	// Create directory for the chat if it doesn't exist
 	if err := os.MkdirAll(chatDir, 0755); err != nil {
-		return false, "", "", "", fmt.Errorf("failed to create chat directory: %v", err)
+		return false, "", "", "", "", fmt.Errorf("failed to create chat directory: %v", err)
 	}
 
 	// Generate a local path for the file
@@ -599,18 +601,25 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 	// Get absolute path
 	absPath, err := filepath.Abs(localPath)
 	if err != nil {
-		return false, "", "", "", fmt.Errorf("failed to get absolute path: %v", err)
+		return false, "", "", "", "", fmt.Errorf("failed to get absolute path: %v", err)
 	}
 
 	// Check if file already exists
 	if _, err := os.Stat(localPath); err == nil {
-		// File exists, return it
-		return true, mediaType, filename, absPath, nil
+		// File exists, check if it's an image or PDF and return base64
+		var base64Data string
+		if mediaType == "image" || (mediaType == "document" && strings.HasSuffix(strings.ToLower(filename), ".pdf")) {
+			fileData, err := os.ReadFile(localPath)
+			if err == nil {
+				base64Data = base64.StdEncoding.EncodeToString(fileData)
+			}
+		}
+		return true, mediaType, filename, absPath, base64Data, nil
 	}
 
 	// If we don't have all the media info we need, we can't download
 	if url == "" || len(mediaKey) == 0 || len(fileSHA256) == 0 || len(fileEncSHA256) == 0 || fileLength == 0 {
-		return false, "", "", "", fmt.Errorf("incomplete media information for download")
+		return false, "", "", "", "", fmt.Errorf("incomplete media information for download")
 	}
 
 	fmt.Printf("Attempting to download media for message %s in chat %s...\n", messageID, chatJID)
@@ -630,7 +639,7 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 	case "document":
 		waMediaType = whatsmeow.MediaDocument
 	default:
-		return false, "", "", "", fmt.Errorf("unsupported media type: %s", mediaType)
+		return false, "", "", "", "", fmt.Errorf("unsupported media type: %s", mediaType)
 	}
 
 	downloader := &MediaDownloader{
@@ -646,16 +655,22 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 	// Download the media using whatsmeow client
 	mediaData, err := client.Download(context.Background(), downloader)
 	if err != nil {
-		return false, "", "", "", fmt.Errorf("failed to download media: %v", err)
+		return false, "", "", "", "", fmt.Errorf("failed to download media: %v", err)
 	}
 
 	// Save the downloaded media to file
 	if err := os.WriteFile(localPath, mediaData, 0644); err != nil {
-		return false, "", "", "", fmt.Errorf("failed to save media file: %v", err)
+		return false, "", "", "", "", fmt.Errorf("failed to save media file: %v", err)
+	}
+
+	// Convert to base64 if it's an image or PDF
+	var base64Data string
+	if mediaType == "image" || (mediaType == "document" && strings.HasSuffix(strings.ToLower(filename), ".pdf")) {
+		base64Data = base64.StdEncoding.EncodeToString(mediaData)
 	}
 
 	fmt.Printf("Successfully downloaded %s media to %s (%d bytes)\n", mediaType, absPath, len(mediaData))
-	return true, mediaType, filename, absPath, nil
+	return true, mediaType, filename, absPath, base64Data, nil
 }
 
 // Extract direct path from a WhatsApp media URL
@@ -952,7 +967,7 @@ func startRESTServer(port int) {
 		}
 
 		// Download the media
-		success, mediaType, filename, path, err := downloadMedia(client, messageStore, req.MessageID, req.ChatJID, userID)
+		success, mediaType, filename, path, base64Data, err := downloadMedia(client, messageStore, req.MessageID, req.ChatJID, userID)
 
 		// Set response headers
 		w.Header().Set("Content-Type", "application/json")
@@ -978,6 +993,7 @@ func startRESTServer(port int) {
 			Message:  fmt.Sprintf("Successfully downloaded %s media", mediaType),
 			Filename: filename,
 			Path:     path,
+			File:     base64Data, // Include base64 data for images
 		})
 	})
 

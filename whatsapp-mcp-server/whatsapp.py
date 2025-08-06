@@ -888,7 +888,7 @@ def send_audio_message(recipient: str, media_path: str, user_id: str = None) -> 
         return False, f"Error: HTTP {response.status_code} - {response.text}"
 
 
-def download_media(user_id: str, message_id: str, chat_jid: str) -> str:
+def download_media(user_id: str, message_id: str, chat_jid: str) -> Dict[str, Any]:
     if user_id is None:
         user_id = get_or_create_user_id()
     
@@ -904,13 +904,42 @@ def download_media(user_id: str, message_id: str, chat_jid: str) -> str:
     response = requests.post(url, json=payload)
     if response.status_code == 200:
         result = response.json()
-        if result.get("success", False):
+        if result.get("success"):  # Fixed success condition check
             path = result.get("path")
-            print(f"Media downloaded successfully: {path}")
-            return path
+            file_data = result.get("file")  # Get base64 data if available
+            filename = result.get("filename", "")
+            message = result.get("message", "Media downloaded successfully")
+            
+            if file_data:
+                print(f"Media downloaded successfully: {path} (with base64 data)")
+                return {
+                    "success": True,
+                    "message": message,
+                    "path": path,
+                    "filename": filename,
+                    "file": file_data,
+                    "type": "base64"
+                }
+            else:
+                print(f"Media downloaded successfully: {path}")
+                return {
+                    "success": True,
+                    "message": message,
+                    "path": path,
+                    "filename": filename,
+                    "type": "file_path"
+                }
         else:
-            print(f"Download failed: {result.get('message', 'Unknown error')}")
-            return None
+            error_message = result.get('message', 'Unknown error')
+            print(f"Download failed: {error_message}")
+            return {
+                "success": False,
+                "message": error_message
+            }
     else:
-        print(f"Error: HTTP {response.status_code} - {response.text}")
-        return None
+        error_message = f"Error: HTTP {response.status_code} - {response.text}"
+        print(error_message)
+        return {
+            "success": False,
+            "message": error_message
+        }

@@ -240,24 +240,22 @@ def send_audio_message(recipient: str, media_path: str) -> Dict[str, Any]:
 
 @mcp.tool()
 def download_media(message_id: str, chat_jid: str) -> Dict[str, Any]:
-    """Download media from a WhatsApp message and get the local file path.
+    """Download media from a WhatsApp message and get the local file path or base64 data for images and PDFs.
     
     Args:
         message_id: The ID of the message containing the media
         chat_jid: The JID of the chat containing the message
     
     Returns:
-        A dictionary containing success status, a status message, and the file path if successful
+        A dictionary containing success status, a status message, and either the file path or base64 data if successful
     """
-    file_path = whatsapp_download_media(message_id, chat_jid)
+    result = whatsapp_download_media(message_id, chat_jid)
     
-    if file_path:
-        return {
-            "success": True,
-            "message": "Media downloaded successfully",
-            "file_path": file_path
-        }
+    if result and isinstance(result, dict):
+        # The result is already a dictionary object
+        return result
     else:
+        # Fallback for backward compatibility
         return {
             "success": False,
             "message": "Failed to download media"
