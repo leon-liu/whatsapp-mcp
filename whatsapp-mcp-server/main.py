@@ -239,17 +239,18 @@ def send_audio_message(recipient: str, media_path: str) -> Dict[str, Any]:
     }
 
 @mcp.tool()
-def download_media(message_id: str, chat_jid: str) -> Dict[str, Any]:
+def download_media(message_id: str, chat_jid: str, user_id: Optional[str] = None) -> Dict[str, Any]:
     """Download media from a WhatsApp message and get the local file path or base64 data for images and PDFs.
     
     Args:
         message_id: The ID of the message containing the media
         chat_jid: The JID of the chat containing the message
+        user_id: Optional user ID. If not provided, will use or create a user ID automatically.
     
     Returns:
         A dictionary containing success status, a status message, and either the file path or base64 data if successful
     """
-    result = whatsapp_download_media(message_id, chat_jid)
+    result = whatsapp_download_media(user_id, message_id, chat_jid)
     
     if result and isinstance(result, dict):
         # The result is already a dictionary object
