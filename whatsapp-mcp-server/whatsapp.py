@@ -63,9 +63,13 @@ class MessageContext:
     before: List[Message]
     after: List[Message]
 
-def git (sender_jid: str) -> str:
+def git(sender_jid: str, user_id: Optional[str] = None) -> str:
     try:
-        conn = sqlite3.connect(MESSAGES_DB_PATH)
+        if user_id:
+            db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../whatsapp-bridge/store", user_id, "messages.db"))
+        else:
+            db_path = MESSAGES_DB_PATH
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
         # First try matching by exact JID
@@ -107,7 +111,7 @@ def git (sender_jid: str) -> str:
         if 'conn' in locals():
             conn.close()
 
-def format_message(message: Message, show_chat_info: bool = True) -> None:
+def format_message(message: Message, show_chat_info: bool = True, user_id: Optional[str] = None) -> None:
     """Print a single message with consistent formatting."""
     output = ""
     
@@ -121,23 +125,24 @@ def format_message(message: Message, show_chat_info: bool = True) -> None:
         content_prefix = f"[{message.media_type} - Message ID: {message.id} - Chat JID: {message.chat_jid}] "
     
     try:
-        sender_name = git (message.sender) if not message.is_from_me else "Me"
+        sender_name = git(message.sender, user_id) if not message.is_from_me else "Me"
         output += f"From: {sender_name}: {content_prefix}{message.content}\n"
     except Exception as e:
         print(f"Error formatting message: {e}")
     return output
 
-def format_messages_list(messages: List[Message], show_chat_info: bool = True) -> None:
+def format_messages_list(messages: List[Message], show_chat_info: bool = True, user_id: Optional[str] = None) -> None:
     output = ""
     if not messages:
         output += "No messages to display."
         return output
     
     for message in messages:
-        output += format_message(message, show_chat_info)
+        output += format_message(message, show_chat_info, user_id)
     return output
 
 def list_messages(
+    user_id: str,
     after: Optional[str] = None,
     before: Optional[str] = None,
     sender_phone_number: Optional[str] = None,
@@ -151,7 +156,8 @@ def list_messages(
 ) -> List[Message]:
     """Get messages matching the specified criteria with optional context."""
     try:
-        conn = sqlite3.connect(MESSAGES_DB_PATH)
+        db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../whatsapp-bridge/store", user_id, "messages.db"))
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
         # Build base query
@@ -224,15 +230,15 @@ def list_messages(
             # Add context for each message
             messages_with_context = []
             for msg in result:
-                context = get_message_context(msg.id, context_before, context_after)
+                context = get_message_context(msg.id, context_before, context_after, user_id)
                 messages_with_context.extend(context.before)
                 messages_with_context.append(context.message)
                 messages_with_context.extend(context.after)
             
-            return format_messages_list(messages_with_context, show_chat_info=True)
+            return format_messages_list(messages_with_context, show_chat_info=True, user_id=user_id)
             
         # Format and display messages without context
-        return format_messages_list(result, show_chat_info=True)    
+        return format_messages_list(result, show_chat_info=True, user_id=user_id)    
         
     except sqlite3.Error as e:
         print(f"Database error: {e}")
@@ -245,11 +251,16 @@ def list_messages(
 def get_message_context(
     message_id: str,
     before: int = 5,
-    after: int = 5
+    after: int = 5,
+    user_id: Optional[str] = None
 ) -> MessageContext:
     """Get context around a specific message."""
     try:
-        conn = sqlite3.connect(MESSAGES_DB_PATH)
+        if user_id:
+            db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../whatsapp-bridge/store", user_id, "messages.db"))
+        else:
+            db_path = MESSAGES_DB_PATH
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
         # Get the target message first
@@ -412,10 +423,14 @@ def list_chats(user_id: str,
             conn.close()
 
 
-def search_contacts(query: str) -> List[Contact]:
+def search_contacts(query: str, user_id: Optional[str] = None) -> List[Contact]:
     """Search contacts by name or phone number."""
     try:
-        conn = sqlite3.connect(MESSAGES_DB_PATH)
+        if user_id:
+            db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../whatsapp-bridge/store", user_id, "messages.db"))
+        else:
+            db_path = MESSAGES_DB_PATH
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
         # Split query into characters to support partial matching

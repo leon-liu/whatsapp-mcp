@@ -23,17 +23,19 @@ import requests
 mcp = FastMCP("whatsapp")
 
 @mcp.tool()
-def search_contacts(query: str) -> List[Dict[str, Any]]:
+def search_contacts(query: str, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Search WhatsApp contacts by name or phone number.
     
     Args:
         query: Search term to match against contact names or phone numbers
+        user_id: Optional user ID to specify which database to use
     """
-    contacts = whatsapp_search_contacts(query)
+    contacts = whatsapp_search_contacts(query, user_id)
     return contacts
 
 @mcp.tool()
 def list_messages(
+    user_id: str,
     after: Optional[str] = None,
     before: Optional[str] = None,
     sender_phone_number: Optional[str] = None,
@@ -48,6 +50,7 @@ def list_messages(
     """Get WhatsApp messages matching specified criteria with optional context.
     
     Args:
+        user_id: The user ID whose messages to list
         after: Optional ISO-8601 formatted string to only return messages after this date
         before: Optional ISO-8601 formatted string to only return messages before this date
         sender_phone_number: Optional phone number to filter messages by sender
@@ -60,6 +63,7 @@ def list_messages(
         context_after: Number of messages to include after each match (default 1)
     """
     messages = whatsapp_list_messages(
+        user_id=user_id,
         after=after,
         before=before,
         sender_phone_number=sender_phone_number,
@@ -153,7 +157,8 @@ def get_last_interaction(user_id: str, jid: str) -> str:
 def get_message_context(
     message_id: str,
     before: int = 5,
-    after: int = 5
+    after: int = 5,
+    user_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """Get context around a specific WhatsApp message.
     
@@ -161,8 +166,9 @@ def get_message_context(
         message_id: The ID of the message to get context for
         before: Number of messages to include before the target message (default 5)
         after: Number of messages to include after the target message (default 5)
+        user_id: Optional user ID to specify which database to use
     """
-    context = whatsapp_get_message_context(message_id, before, after)
+    context = whatsapp_get_message_context(message_id, before, after, user_id)
     return context
 
 @mcp.tool()
