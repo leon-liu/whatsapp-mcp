@@ -488,6 +488,14 @@ type DownloadMediaResponse struct {
 	S3URL    string `json:"s3_url,omitempty"`
 }
 
+// ContactResponse represents a contact or group for the API
+type ContactResponse struct {
+	JID          string `json:"jid"`
+	Name         string `json:"name"`
+	ProfileImage string `json:"profile_image,omitempty"`
+	IsGroup      bool   `json:"is_group"`
+}
+
 // Store additional media info in the database
 func (store *MessageStore) StoreMediaInfo(id, chatJID, url string, mediaKey, fileSHA256, fileEncSHA256 []byte, fileLength uint64) error {
 	_, err := store.db.Exec(
@@ -993,6 +1001,130 @@ func startRESTServer(port int) {
 		})
 	})
 
+	// Handler for getting contacts (updated for user_id)
+	http.HandleFunc("/api/contacts", func(w http.ResponseWriter, r *http.Request) {
+		userID := r.URL.Query().Get("user_id")
+		if userID == "" {
+			http.Error(w, "user_id required", http.StatusBadRequest)
+			return
+		}
+		logger := waLog.Stdout("Client", "INFO", true)
+		client, err := getClientForUser(userID, logger)
+		if err != nil {
+			http.Error(w, "Failed to get client: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+
+		// Check if user has a valid session stored
+		if client.Store.ID == nil {
+			// No session stored, check in-memory status
+			status, ok := loginStatus[userID]
+			if !ok {
+				status = "not_started"
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"status": status})
+			fmt.Printf("Login status for user %s: %s (no session)\n", userID, status)
+			return
+		}
+
+		// User has a session stored, check connection status
+		if client.IsConnected() {
+			status := "success"
+			loginStatus[userID] = status // Update in-memory status
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"status": status})
+			fmt.Printf("Login status for user %s: %s (connected)\n", userID, status)
+		} else {
+			// Try to connect to check if session is still valid
+			err = client.Connect()
+			if err != nil {
+				status := "failed"
+				loginStatus[userID] = status
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]string{"status": status})
+				fmt.Printf("Login status for user %s: %s (connection failed: %v)\n", userID, status, err)
+			} else {
+				status := "success"
+				loginStatus[userID] = status
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]string{"status": status})
+				fmt.Printf("Login status for user %s: %s (reconnected)\n", userID, status)
+			}
+		}
+
+		// Get all contacts
+		contacts, err := client.Store.Contacts.GetAllContacts(context.TODO())
+		if err != nil {
+			http.Error(w, "Failed to get contacts: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Get joined groups
+		groups, err := client.GetJoinedGroups()
+		if err != nil {
+			logger.Warnf("Failed to get joined groups: %v", err)
+		}
+
+		var contactResponses []ContactResponse
+
+		// Process contacts
+		for jid, contact := range contacts {
+			// Get contact name
+			name := contact.FullName
+			if name == "" {
+				name = contact.FirstName
+			}
+			if name == "" {
+				name = contact.PushName
+			}
+			if name == "" {
+				name = jid.User
+			}
+
+			// Get profile picture
+			profilePictureInfo, err := client.GetProfilePictureInfo(jid, nil)
+			if err != nil {
+				logger.Warnf("Failed to get profile picture info for contact %s: %v", jid.String(), err)
+			}
+			profileImage := ""
+			if profilePictureInfo != nil {
+				profileImage = profilePictureInfo.URL
+			}
+
+			contactResponses = append(contactResponses, ContactResponse{
+				JID:          jid.String(),
+				Name:         name,
+				ProfileImage: profileImage,
+				IsGroup:      false,
+			})
+		}
+
+		// Process groups (add groups that might not be in contacts)
+		for _, group := range groups {
+			// Get profile picture for group
+			profilePictureInfo, err := client.GetProfilePictureInfo(group.JID, nil)
+			if err != nil {
+				logger.Warnf("Failed to get profile picture info for group %s: %v", group.JID.String(), err)
+			}
+			profileImage := ""
+			if profilePictureInfo != nil {
+				profileImage = profilePictureInfo.URL
+			}
+
+			contactResponses = append(contactResponses, ContactResponse{
+				JID:          group.JID.String(),
+				Name:         group.Name,
+				ProfileImage: profileImage,
+				IsGroup:      true,
+			})
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(contactResponses)
+	})
+
 	// Start the server
 	serverAddr := fmt.Sprintf(":%d", port)
 	fmt.Printf("Starting REST API server on %s...\n", serverAddr)
@@ -1106,6 +1238,10 @@ func GetChatName(client *whatsmeow.Client, messageStore *MessageStore, jid types
 		contact, err := client.Store.Contacts.GetContact(context.Background(), jid)
 		if err == nil && contact.FullName != "" {
 			name = contact.FullName
+		} else if contact.FirstName != "" {
+			name = contact.FirstName
+		} else if contact.PushName != "" {
+			name = contact.PushName
 		} else if sender != "" {
 			// Fallback to sender
 			name = sender
