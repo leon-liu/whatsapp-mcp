@@ -3,6 +3,10 @@ ssh -i "~/Downloads/aidirectorycrawler.pem" ubuntu@ec2-99-80-21-173.eu-west-1.co
 
 whatsapp-bridge
 go version go1.24.4 linux/amd64
+/usr/local/go/bin/go build -o whatsapp-bridge .
+ubuntu@ip-172-31-11-224:~/whatsapp-mcp/whatsapp-bridge$ nohup ./whatsapp-bridge &
+ubuntu@ip-172-31-11-224:~/whatsapp-mcp/whatsapp-bridge$ ps aux | grep whatsapp-bridge
+
 ubuntu@ip-172-31-11-224:~/whatsapp-mcp/whatsapp-bridge$ nohup /usr/local/go/bin/go run main.go &
 
 
