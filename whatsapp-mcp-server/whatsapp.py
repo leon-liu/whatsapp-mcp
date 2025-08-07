@@ -906,19 +906,19 @@ def download_media(user_id: Optional[str], message_id: str, chat_jid: str) -> Di
         result = response.json()
         if result.get("success"):  # Fixed success condition check
             path = result.get("path")
-            file_data = result.get("file")  # Get base64 data if available
+            s3_url = result.get("s3_url")  # Get S3 URL if available
             filename = result.get("filename", "")
             message = result.get("message", "Media downloaded successfully")
             
-            if file_data:
-                print(f"Media downloaded successfully: {path} (with base64 data)")
+            if s3_url:
+                print(f"Media downloaded successfully: {path} (uploaded to S3: {s3_url})")
                 return {
                     "success": True,
                     "message": message,
                     "path": path,
                     "filename": filename,
-                    "file": file_data,
-                    "type": "base64"
+                    "s3_url": s3_url,
+                    "type": "s3"
                 }
             else:
                 print(f"Media downloaded successfully: {path}")

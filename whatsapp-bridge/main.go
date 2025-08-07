@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -32,6 +31,13 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 	"google.golang.org/protobuf/proto"
+
+	"io"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
 )
 
 // Message represents a chat message for our client
@@ -486,7 +492,7 @@ type DownloadMediaResponse struct {
 	Message  string `json:"message"`
 	Filename string `json:"filename,omitempty"`
 	Path     string `json:"path,omitempty"`
-	File     string `json:"file,omitempty"`
+	S3URL    string `json:"s3_url,omitempty"`
 }
 
 // Store additional media info in the database
@@ -606,15 +612,12 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 
 	// Check if file already exists
 	if _, err := os.Stat(localPath); err == nil {
-		// File exists, check if it's an image or PDF and return base64
-		var base64Data string
-		if mediaType == "image" || (mediaType == "document" && strings.HasSuffix(strings.ToLower(filename), ".pdf")) {
-			fileData, err := os.ReadFile(localPath)
-			if err == nil {
-				base64Data = base64.StdEncoding.EncodeToString(fileData)
-			}
+		// File exists, upload to S3
+		s3URL, err := uploadToS3(localPath, userID, chatJID)
+		if err != nil {
+			return false, "", "", "", "", fmt.Errorf("failed to upload to S3: %v", err)
 		}
-		return true, mediaType, filename, absPath, base64Data, nil
+		return true, mediaType, filename, absPath, s3URL, nil
 	}
 
 	// If we don't have all the media info we need, we can't download
@@ -663,14 +666,14 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 		return false, "", "", "", "", fmt.Errorf("failed to save media file: %v", err)
 	}
 
-	// Convert to base64 if it's an image or PDF
-	var base64Data string
-	if mediaType == "image" || (mediaType == "document" && strings.HasSuffix(strings.ToLower(filename), ".pdf")) {
-		base64Data = base64.StdEncoding.EncodeToString(mediaData)
+	// Upload to S3
+	s3URL, err := uploadToS3(localPath, userID, chatJID)
+	if err != nil {
+		return false, "", "", "", "", fmt.Errorf("failed to upload to S3: %v", err)
 	}
 
-	fmt.Printf("Successfully downloaded %s media to %s (%d bytes)\n", mediaType, absPath, len(mediaData))
-	return true, mediaType, filename, absPath, base64Data, nil
+	fmt.Printf("Successfully downloaded %s media to %s (%d bytes) and uploaded to S3: %s\n", mediaType, absPath, len(mediaData), s3URL)
+	return true, mediaType, filename, absPath, s3URL, nil
 }
 
 // Extract direct path from a WhatsApp media URL
@@ -967,7 +970,7 @@ func startRESTServer(port int) {
 		}
 
 		// Download the media
-		success, mediaType, filename, path, base64Data, err := downloadMedia(client, messageStore, req.MessageID, req.ChatJID, userID)
+		success, mediaType, filename, path, s3URL, err := downloadMedia(client, messageStore, req.MessageID, req.ChatJID, userID)
 
 		// Set response headers
 		w.Header().Set("Content-Type", "application/json")
@@ -993,8 +996,123 @@ func startRESTServer(port int) {
 			Message:  fmt.Sprintf("Successfully downloaded %s media", mediaType),
 			Filename: filename,
 			Path:     path,
-			File:     base64Data, // Include base64 data for images
+			S3URL:    s3URL, // Include S3 URL for uploaded files
 		})
+	})
+
+	// Test endpoint for debugging S3 image issues
+	http.HandleFunc("/api/test-s3", func(w http.ResponseWriter, r *http.Request) {
+		s3URL := r.URL.Query().Get("url")
+		if s3URL == "" {
+			http.Error(w, "S3 URL is required", http.StatusBadRequest)
+			return
+		}
+
+		fmt.Printf("Testing S3 URL: %s\n", s3URL)
+
+		// Parse the URL
+		bucket, key, err := extractBucketAndKeyFromURL(s3URL)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("URL parsing error: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		// Return debug information
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"original_url": s3URL,
+			"bucket":       bucket,
+			"key":          key,
+			"content_type": getContentTypeFromExtension(key),
+		})
+	})
+
+	// Handler for serving S3 files (images, videos, documents, etc.)
+	http.HandleFunc("/api/s3-file", func(w http.ResponseWriter, r *http.Request) {
+		// Only allow GET requests
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Get the S3 URL from query parameter
+		s3URL := r.URL.Query().Get("url")
+		if s3URL == "" {
+			http.Error(w, "S3 URL is required", http.StatusBadRequest)
+			return
+		}
+
+		fmt.Printf("Processing S3 file request for URL: %s\n", s3URL)
+
+		// Get S3 configuration
+		config := getS3Config()
+
+		// Create AWS session
+		sess, err := session.NewSession(&aws.Config{
+			Region:      aws.String(config.Region),
+			Credentials: credentials.NewStaticCredentials(config.AccessKeyID, config.SecretAccessKey, config.SessionToken),
+		})
+		if err != nil {
+			http.Error(w, "Failed to create AWS session", http.StatusInternalServerError)
+			return
+		}
+
+		// Create S3 client
+		s3Client := s3.New(sess)
+
+		// Parse the S3 URL to extract bucket and key
+		bucket, key, err := extractBucketAndKeyFromURL(s3URL)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Invalid S3 URL: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		fmt.Printf("Extracted bucket: %s, key: %s\n", bucket, key)
+
+		// Get the object from S3
+		result, err := s3Client.GetObject(&s3.GetObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+		})
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to get object from S3: %v", err), http.StatusInternalServerError)
+			return
+		}
+		defer result.Body.Close()
+
+		// Set appropriate headers
+		if result.ContentType != nil {
+			w.Header().Set("Content-Type", *result.ContentType)
+			fmt.Printf("Content-Type: %s\n", *result.ContentType)
+		} else {
+			// Try to determine content type from file extension
+			contentType := getContentTypeFromExtension(key)
+			w.Header().Set("Content-Type", contentType)
+			fmt.Printf("Inferred Content-Type: %s\n", contentType)
+		}
+
+		if result.ContentLength != nil {
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", *result.ContentLength))
+			fmt.Printf("Content-Length: %d\n", *result.ContentLength)
+		}
+
+		// Set cache headers
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
+		// Copy the object body to the response
+		bytesCopied, err := io.Copy(w, result.Body)
+		if err != nil {
+			http.Error(w, "Failed to copy object data", http.StatusInternalServerError)
+			return
+		}
+
+		fmt.Printf("Successfully served %d bytes for %s\n", bytesCopied, s3URL)
+
+		// Additional debugging: check if the response was written correctly
+		if bytesCopied == 0 {
+			fmt.Printf("⚠️  Warning: No bytes were copied for %s\n", s3URL)
+		}
 	})
 
 	// Start the server
@@ -1466,8 +1584,10 @@ func placeholderWaveform(duration uint32) []byte {
 	return waveform
 }
 
-var messageStores = make(map[string]*MessageStore)
-var messageStoreLocks = make(map[string]*sync.Mutex)
+var (
+	messageStores     = make(map[string]*MessageStore)
+	messageStoreLocks = make(map[string]*sync.Mutex)
+)
 
 func getMessageStoreForUser(userID string) (*MessageStore, error) {
 	lock, ok := messageStoreLocks[userID]
@@ -1487,4 +1607,186 @@ func getMessageStoreForUser(userID string) (*MessageStore, error) {
 	}
 	messageStores[userID] = store
 	return store, nil
+}
+
+// getContentTypeFromExtension determines the content type based on file extension
+func getContentTypeFromExtension(filename string) string {
+	ext := strings.ToLower(filepath.Ext(filename))
+	switch ext {
+	// Images
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".gif":
+		return "image/gif"
+	case ".bmp":
+		return "image/bmp"
+	case ".webp":
+		return "image/webp"
+	case ".svg":
+		return "image/svg+xml"
+	case ".ico":
+		return "image/x-icon"
+	case ".tiff", ".tif":
+		return "image/tiff"
+
+	// Documents
+	case ".pdf":
+		return "application/pdf"
+	case ".doc":
+		return "application/msword"
+	case ".docx":
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".xls":
+		return "application/vnd.ms-excel"
+	case ".xlsx":
+		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	case ".ppt":
+		return "application/vnd.ms-powerpoint"
+	case ".pptx":
+		return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+	case ".txt":
+		return "text/plain"
+	case ".rtf":
+		return "application/rtf"
+	case ".csv":
+		return "text/csv"
+	case ".json":
+		return "application/json"
+	case ".xml":
+		return "application/xml"
+	case ".html", ".htm":
+		return "text/html"
+	case ".css":
+		return "text/css"
+	case ".js":
+		return "application/javascript"
+
+	// Archives
+	case ".zip":
+		return "application/zip"
+	case ".rar":
+		return "application/vnd.rar"
+	case ".7z":
+		return "application/x-7z-compressed"
+	case ".tar":
+		return "application/x-tar"
+	case ".gz":
+		return "application/gzip"
+
+	// Videos
+	case ".mp4":
+		return "video/mp4"
+	case ".avi":
+		return "video/x-msvideo"
+	case ".mov":
+		return "video/quicktime"
+	case ".wmv":
+		return "video/x-ms-wmv"
+	case ".flv":
+		return "video/x-flv"
+	case ".webm":
+		return "video/webm"
+	case ".mkv":
+		return "video/x-matroska"
+	case ".3gp":
+		return "video/3gpp"
+	case ".m4v":
+		return "video/x-m4v"
+
+	// Audio
+	case ".mp3":
+		return "audio/mpeg"
+	case ".wav":
+		return "audio/wav"
+	case ".ogg":
+		return "audio/ogg"
+	case ".aac":
+		return "audio/aac"
+	case ".flac":
+		return "audio/flac"
+	case ".m4a":
+		return "audio/mp4"
+	case ".wma":
+		return "audio/x-ms-wma"
+
+	// Code/Text files
+	case ".py":
+		return "text/x-python"
+	case ".java":
+		return "text/x-java-source"
+	case ".cpp", ".cc":
+		return "text/x-c++src"
+	case ".c":
+		return "text/x-csrc"
+	case ".php":
+		return "text/x-php"
+	case ".rb":
+		return "text/x-ruby"
+	case ".go":
+		return "text/x-go"
+	case ".rs":
+		return "text/x-rust"
+	case ".swift":
+		return "text/x-swift"
+	case ".kt":
+		return "text/x-kotlin"
+	case ".scala":
+		return "text/x-scala"
+	case ".sh":
+		return "application/x-sh"
+	case ".bat":
+		return "application/x-msdos-program"
+	case ".ps1":
+		return "application/x-powershell"
+
+	// Data files
+	case ".sql":
+		return "application/sql"
+	case ".yaml", ".yml":
+		return "application/x-yaml"
+	case ".toml":
+		return "application/toml"
+	case ".ini":
+		return "text/plain"
+	case ".conf":
+		return "text/plain"
+	case ".log":
+		return "text/plain"
+
+	default:
+		return "application/octet-stream"
+	}
+}
+
+// extractBucketAndKeyFromURL extracts bucket and key from an S3 URL.
+func extractBucketAndKeyFromURL(s3URL string) (string, string, error) {
+	// Example S3 URL: https://whatsapp-stuff.s3.us-west-2.amazonaws.com/abc/19714594907-s-whatsapp-net/image.jpg
+	// We need to extract "whatsapp-stuff" and "abc/19714594907-s-whatsapp-net/image.jpg"
+
+	// Remove the scheme (https://)
+	parts := strings.SplitN(s3URL, "://", 2)
+	if len(parts) < 2 {
+		return "", "", fmt.Errorf("invalid S3 URL format")
+	}
+	urlPath := parts[1]
+
+	// Split by the first slash to get the domain part
+	domainAndPath := strings.SplitN(urlPath, "/", 2)
+	if len(domainAndPath) < 2 {
+		return "", "", fmt.Errorf("invalid S3 URL format")
+	}
+
+	domain := domainAndPath[0]
+	key := domainAndPath[1]
+
+	// Extract bucket name from domain (e.g., "whatsapp-stuff.s3.us-west-2.amazonaws.com" -> "whatsapp-stuff")
+	bucketParts := strings.Split(domain, ".")
+	if len(bucketParts) < 1 {
+		return "", "", fmt.Errorf("invalid S3 URL format")
+	}
+
+	bucket := bucketParts[0]
+	return bucket, key, nil
 }

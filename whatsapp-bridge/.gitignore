@@ -1,3 +1,6 @@
 .DS_Store
 
 store/
+
+.env
+.env.local
