@@ -1015,42 +1015,11 @@ func startRESTServer(port int) {
 			return
 		}
 
-
-		// Check if user has a valid session stored
-		if client.Store.ID == nil {
-			// No session stored, check in-memory status
-			status, ok := loginStatus[userID]
-			if !ok {
-				status = "not_started"
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"status": status})
-			fmt.Printf("Login status for user %s: %s (no session)\n", userID, status)
-			return
-		}
-
-		// User has a session stored, check connection status
-		if client.IsConnected() {
-			status := "success"
-			loginStatus[userID] = status // Update in-memory status
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"status": status})
-			fmt.Printf("Login status for user %s: %s (connected)\n", userID, status)
-		} else {
-			// Try to connect to check if session is still valid
+		if !client.IsConnected() {
 			err = client.Connect()
 			if err != nil {
-				status := "failed"
-				loginStatus[userID] = status
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]string{"status": status})
-				fmt.Printf("Login status for user %s: %s (connection failed: %v)\n", userID, status, err)
-			} else {
-				status := "success"
-				loginStatus[userID] = status
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]string{"status": status})
-				fmt.Printf("Login status for user %s: %s (reconnected)\n", userID, status)
+				fmt.Printf("Login status for user %s: (connection failed: %v)\n", userID, err)
+				return
 			}
 		}
 

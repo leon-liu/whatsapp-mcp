@@ -787,6 +787,36 @@ def get_qr_code(user_id: str = None) -> dict:
             "message": f"Failed to get QR code: {resp.text}"
         }
 
+def get_contacts(user_id: str = None) -> dict:
+    if user_id is None:
+        user_id = get_or_create_user_id()
+    url = f"{WHATSAPP_API_BASE_URL}/contacts?user_id={user_id}"
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            contacts_data = response.json()
+            return {
+                "success": True,
+                "user_id": user_id,
+                "contacts": contacts_data,
+                "message": f"Contacts and joined groups for user {user_id}."
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"Failed to get contacts: HTTP {response.status_code} - {response.text}"
+            }
+    except requests.exceptions.RequestException as e:
+        return {
+            "success": False,
+            "message": f"Network error while fetching contacts: {str(e)}"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Error getting contacts: {str(e)}"
+        }
+
 def login(user_id: str = None):
     """Login to WhatsApp for a specific user_id using QR code."""
     if user_id is None:

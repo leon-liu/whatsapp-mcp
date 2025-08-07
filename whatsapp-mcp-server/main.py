@@ -15,7 +15,8 @@ from whatsapp import (
     download_media as whatsapp_download_media,
     login as whatsapp_login,
     get_qr_code as whatsapp_get_qr_code,
-    get_login_status as whatsapp_get_login_status
+    get_login_status as whatsapp_get_login_status,
+    get_contacts as whatsapp_get_contacts
 )
 import requests
 
@@ -355,6 +356,26 @@ def get_login_status(user_id: Optional[str] = None) -> Dict[str, Any]:
             "success": False,
             "status": "error",
             "message": f"Error checking login status: {str(e)}"
+        }
+
+@mcp.tool()
+def get_contacts(user_id: Optional[str] = None) -> Dict[str, Any]:
+    """Get all WhatsApp contacts for a specific user.
+    
+    Args:
+        user_id: Optional user ID. If not provided, will use or create a user ID automatically.
+    
+    Returns:
+        A dictionary containing success status, contacts list, and status message
+    """
+    try:
+        result = whatsapp_get_contacts(user_id)
+        return result
+    except Exception as e:
+        return {
+            "success": False,
+            "status": "error",
+            "message": f"Error getting contacts: {str(e)}"
         }
 
 if __name__ == "__main__":
