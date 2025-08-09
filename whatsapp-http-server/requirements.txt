@@ -2,4 +2,5 @@ fastapi
 uvicorn
 pydantic
 boto3
-python-dotenv 
+python-dotenv
+requests 
