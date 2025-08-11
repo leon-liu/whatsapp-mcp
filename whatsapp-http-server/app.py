@@ -17,11 +17,12 @@ origins = [
     "http://localhost:8081",
 ]
 
+# Use a more explicit CORS configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_credentials=False,  # Changed to False to avoid CORS issues
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 

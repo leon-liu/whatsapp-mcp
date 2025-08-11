@@ -20,6 +20,11 @@ Python 3.12.2
 pip install fastapi uvicorn
 nohup uvicorn app:app --reload --host 0.0.0.0 --port 8040 &
 
+sudo pkill -f "whatsapp-http-server"
+
+
+
+
 {
     "mcpServers": {
       "whatsapp": {
