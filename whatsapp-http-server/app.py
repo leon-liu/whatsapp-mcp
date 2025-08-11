@@ -13,7 +13,8 @@ app = FastAPI()
 # Add CORS middleware
 origins = [
     "http://localhost:8080",
-    "https://preview--know-chat-hive.lovable.app/"
+    "https://preview--know-chat-hive.lovable.app/",
+    "http://localhost:8081",
 ]
 
 app.add_middleware(
