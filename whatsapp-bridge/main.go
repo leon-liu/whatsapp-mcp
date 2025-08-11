@@ -67,7 +67,8 @@ func NewMessageStore(userID string) (*MessageStore, error) {
 		CREATE TABLE IF NOT EXISTS chats (
 			jid TEXT PRIMARY KEY,
 			name TEXT,
-			last_message_time TIMESTAMP
+			last_message_time TIMESTAMP,
+			is_allowed BOOLEAN DEFAULT FALSE
 		);
 		
 		CREATE TABLE IF NOT EXISTS messages (
@@ -173,6 +174,45 @@ func (store *MessageStore) GetChats() (map[string]time.Time, error) {
 	}
 
 	return chats, nil
+}
+
+// Check if a contact is allowed
+func (store *MessageStore) IsContactAllowed(jid string) (bool, error) {
+	var isAllowed bool
+	err := store.db.QueryRow("SELECT is_allowed FROM chats WHERE jid = ?", jid).Scan(&isAllowed)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// Contact not found, default to not allowed
+			return false, nil
+		}
+		return false, err
+	}
+	return isAllowed, nil
+}
+
+// Allow contacts by updating their is_allowed status
+// First resets all contacts to not allowed, then allows the specified contacts
+func (store *MessageStore) AllowContacts(contacts []AllowContactRequest) (int, error) {
+	fmt.Printf("Allowing contacts: %v\n", contacts)
+	// First, reset all contacts to not allowed
+	_, err := store.db.Exec("UPDATE chats SET is_allowed = FALSE")
+	if err != nil {
+		return 0, fmt.Errorf("failed to reset contacts: %v", err)
+	}
+
+	// Then allow the specified contacts
+	allowed := 0
+	for _, contact := range contacts {
+		_, err := store.db.Exec(
+			"UPDATE chats SET is_allowed = ? WHERE jid = ?",
+			true, contact.JID,
+		)
+		if err != nil {
+			return allowed, err
+		}
+		allowed++
+	}
+	return allowed, nil
 }
 
 // Extract text content from a message
@@ -496,6 +536,25 @@ type ContactResponse struct {
 	IsGroup      bool   `json:"is_group"`
 }
 
+// AllowContactRequest represents a contact to be allowed
+type AllowContactRequest struct {
+	JID  string `json:"jid"`
+	Name string `json:"name"`
+}
+
+// AllowContactsRequest represents the request body for allowing contacts
+type AllowContactsRequest struct {
+	UserID   string                `json:"user_id"`
+	Contacts []AllowContactRequest `json:"contacts"`
+}
+
+// AllowContactsResponse represents the response for the allow contacts API
+type AllowContactsResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Allowed int    `json:"allowed"`
+}
+
 // Store additional media info in the database
 func (store *MessageStore) StoreMediaInfo(id, chatJID, url string, mediaKey, fileSHA256, fileEncSHA256 []byte, fileLength uint64) error {
 	_, err := store.db.Exec(
@@ -740,6 +799,20 @@ func getClientForUser(userID string, logger waLog.Logger) (*whatsmeow.Client, er
 				logger.Warnf("Failed to get message store: %v", err)
 				return
 			}
+
+			// Check if the contact is allowed before handling the message
+			chatJID := v.Info.Chat.String()
+			isAllowed, err := messageStore.IsContactAllowed(chatJID)
+			if err != nil {
+				logger.Warnf("Failed to check if contact %s is allowed: %v", chatJID, err)
+				return
+			}
+
+			if !isAllowed {
+				logger.Infof("Ignoring message from non-allowed contact: %s", chatJID)
+				return
+			}
+
 			handleMessage(client, messageStore, v, logger)
 		case *events.HistorySync:
 			messageStore, err := getMessageStoreForUser(userID)
@@ -1092,6 +1165,57 @@ func startRESTServer(port int) {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(contactResponses)
+	})
+
+	// Handler for allowing contacts
+	http.HandleFunc("/api/allow_contacts", func(w http.ResponseWriter, r *http.Request) {
+		// Only allow POST requests
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Parse the request body
+		var req AllowContactsRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request format", http.StatusBadRequest)
+			return
+		}
+
+		// Validate request
+		if req.UserID == "" {
+			http.Error(w, "User ID is required", http.StatusBadRequest)
+			return
+		}
+
+		if len(req.Contacts) == 0 {
+			http.Error(w, "At least one contact is required", http.StatusBadRequest)
+			return
+		}
+
+		// Get message store for the user
+		messageStore, err := getMessageStoreForUser(req.UserID)
+		if err != nil {
+			http.Error(w, "Failed to get message store: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Allow the contacts
+		allowed, err := messageStore.AllowContacts(req.Contacts)
+		if err != nil {
+			http.Error(w, "Failed to allow contacts: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Set response headers
+		w.Header().Set("Content-Type", "application/json")
+
+		// Send response
+		json.NewEncoder(w).Encode(AllowContactsResponse{
+			Success: true,
+			Message: fmt.Sprintf("Successfully allowed %d contacts", allowed),
+			Allowed: allowed,
+		})
 	})
 
 	// Start the server

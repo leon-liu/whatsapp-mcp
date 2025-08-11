@@ -227,6 +227,9 @@ def list_messages(
             where_clauses.append("LOWER(messages.content) LIKE LOWER(?)")
             params.append(f"%{query}%")
             
+        # Always filter by allowed contacts
+        where_clauses.append("chats.is_allowed = TRUE")
+            
         if where_clauses:
             query_parts.append("WHERE " + " AND ".join(where_clauses))
             
@@ -412,6 +415,9 @@ def list_chats(user_id: str,
         if query:
             where_clauses.append("(LOWER(chats.name) LIKE LOWER(?) OR chats.jid LIKE ?)")
             params.extend([f"%{query}%", f"%{query}%"])
+            
+        # Always filter by allowed contacts
+        where_clauses.append("chats.is_allowed = TRUE")
             
         if where_clauses:
             query_parts.append("WHERE " + " AND ".join(where_clauses))
@@ -788,6 +794,7 @@ def get_qr_code(user_id: str = None) -> dict:
         }
 
 def get_contacts(user_id: str = None) -> dict:
+    """Get all contacts and joined groups for a specific user."""
     if user_id is None:
         user_id = get_or_create_user_id()
     url = f"{WHATSAPP_API_BASE_URL}/contacts?user_id={user_id}"
@@ -816,6 +823,8 @@ def get_contacts(user_id: str = None) -> dict:
             "success": False,
             "message": f"Error getting contacts: {str(e)}"
         }
+
+
 
 def login(user_id: str = None):
     """Login to WhatsApp for a specific user_id using QR code."""

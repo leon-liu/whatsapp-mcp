@@ -5,7 +5,7 @@ from typing import Optional
 from pydantic import BaseModel
 import requests
 import base64
-from whatsapp import list_chats, Chat
+from whatsapp import list_chats, Chat, get_allowed_contacts
 from s3_service import s3_service
 
 app = FastAPI()
@@ -27,6 +27,8 @@ app.add_middleware(
 # WhatsApp API base URL
 WHATSAPP_API_BASE_URL = "http://localhost:8080/api"
 
+
+
 class ChatModel(BaseModel):
     jid: str
     name: Optional[str]
@@ -34,6 +36,9 @@ class ChatModel(BaseModel):
     last_message: Optional[str] = None
     last_sender: Optional[str] = None
     last_is_from_me: Optional[bool] = None
+    media_type: Optional[str] = None
+    message_id: Optional[str] = None
+    message_timestamp: Optional[str] = None
 
 class LoginRequest(BaseModel):
     user_id: str
@@ -62,6 +67,44 @@ class ContactsResponse(BaseModel):
     user_id: str
     contacts: list[ContactModel]
     message: str
+
+class AllowContactRequest(BaseModel):
+    jid: str
+    name: str
+
+class AllowContactsRequest(BaseModel):
+    user_id: str
+    contacts: list[AllowContactRequest]
+
+class AllowContactsResponse(BaseModel):
+    success: bool
+    message: str
+    allowed: int
+
+class AllowedContactModel(BaseModel):
+    jid: str
+    name: Optional[str]
+    last_message_time: Optional[str]
+    is_allowed: bool
+    is_group: bool
+
+class AllowedContactsResponse(BaseModel):
+    success: bool
+    user_id: str
+    allowed_contacts: list[AllowedContactModel]
+    count: int
+    message: str
+
+class DownloadMediaRequest(BaseModel):
+    message_id: str
+    chat_jid: str
+
+class DownloadMediaResponse(BaseModel):
+    success: bool
+    message: str
+    filename: Optional[str] = None
+    path: Optional[str] = None
+    s3_url: Optional[str] = None
 
 @app.post("/login", response_model=LoginResponse)
 def login(request: LoginRequest):
@@ -214,6 +257,70 @@ def get_contacts(user_id: str = Query(..., description="User ID to fetch contact
             message=f"Error getting contacts: {str(e)}"
         )
 
+@app.post("/allow_contacts", response_model=AllowContactsResponse)
+def allow_contacts(request: AllowContactsRequest):
+    """
+    Allow specific contacts to send messages.
+    Updates the is_allowed status for the specified contacts.
+    """
+    try:
+        url = f"{WHATSAPP_API_BASE_URL}/allow_contacts"
+        response = requests.post(url, json={
+            "user_id": request.user_id,
+            "contacts": [{"jid": contact.jid, "name": contact.name} for contact in request.contacts]
+        }, timeout=10)
+        
+        if response.status_code == 200:
+            result = response.json()
+            return AllowContactsResponse(
+                success=result.get("success", False),
+                message=result.get("message", ""),
+                allowed=result.get("allowed", 0)
+            )
+        else:
+            return AllowContactsResponse(
+                success=False,
+                message=f"Failed to allow contacts: HTTP {response.status_code} - {response.text}",
+                allowed=0
+            )
+            
+    except requests.exceptions.RequestException as e:
+        return AllowContactsResponse(
+            success=False,
+            message=f"Network error while allowing contacts: {str(e)}",
+            allowed=0
+        )
+    except Exception as e:
+        return AllowContactsResponse(
+            success=False,
+            message=f"Error allowing contacts: {str(e)}",
+            allowed=0
+        )
+
+@app.get("/allow_contacts", response_model=AllowedContactsResponse)
+def get_allowed_contacts_endpoint(user_id: str = Query(..., description="User ID to fetch allowed contacts for")):
+    """
+    Get all allowed contacts for a specific user by reading directly from the database.
+    Returns list of contacts that have is_allowed = TRUE.
+    """
+    try:
+        result = get_allowed_contacts(user_id=user_id)
+        return AllowedContactsResponse(
+            success=result.get("success", False),
+            user_id=result.get("user_id", user_id),
+            allowed_contacts=result.get("allowed_contacts", []),
+            count=result.get("count", 0),
+            message=result.get("message", "")
+        )
+    except Exception as e:
+        return AllowedContactsResponse(
+            success=False,
+            user_id=user_id,
+            allowed_contacts=[],
+            count=0,
+            message=f"Error getting allowed contacts: {str(e)}"
+        )
+
 @app.get("/chats", response_model=list[ChatModel])
 def get_chats(
     user_id: str = Query(..., description="User ID to fetch chats for"),
@@ -235,6 +342,44 @@ def get_chats(
         return [chat.to_dict() for chat in chats]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/download", response_model=DownloadMediaResponse)
+def download_media(
+    request: DownloadMediaRequest,
+    user_id: str = Query(..., description="User ID to download media for")
+):
+    """
+    Download media from a WhatsApp message by calling the WhatsApp bridge API.
+    Returns download status and file information.
+    """
+    try:
+        # Call the WhatsApp bridge download endpoint
+        url = f"{WHATSAPP_API_BASE_URL}/download?user_id={user_id}"
+        
+        response = requests.post(url, json=request.dict())
+        response.raise_for_status()
+        
+        # Parse the response from WhatsApp bridge
+        bridge_response = response.json()
+        
+        return DownloadMediaResponse(
+            success=bridge_response.get("success", False),
+            message=bridge_response.get("message", ""),
+            filename=bridge_response.get("filename"),
+            path=bridge_response.get("path"),
+            s3_url=bridge_response.get("s3_url")
+        )
+        
+    except requests.exceptions.RequestException as e:
+        return DownloadMediaResponse(
+            success=False,
+            message=f"Network error while downloading media: {str(e)}"
+        )
+    except Exception as e:
+        return DownloadMediaResponse(
+            success=False,
+            message=f"Error downloading media: {str(e)}"
+        )
 
 @app.get("/api/s3-file")
 def get_s3_file(url: str = Query(..., description="S3 URL of the file to retrieve")):

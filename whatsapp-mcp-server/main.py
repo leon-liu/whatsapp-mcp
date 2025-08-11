@@ -358,25 +358,25 @@ def get_login_status(user_id: Optional[str] = None) -> Dict[str, Any]:
             "message": f"Error checking login status: {str(e)}"
         }
 
-@mcp.tool()
-def get_contacts(user_id: Optional[str] = None) -> Dict[str, Any]:
-    """Get all WhatsApp contacts for a specific user.
+# @mcp.tool()
+# def get_contacts(user_id: Optional[str] = None) -> Dict[str, Any]:
+#     """Get all WhatsApp contacts for a specific user.
     
-    Args:
-        user_id: Optional user ID. If not provided, will use or create a user ID automatically.
+#     Args:
+#         user_id: Optional user ID. If not provided, will use or create a user ID automatically.
     
-    Returns:
-        A dictionary containing success status, contacts list, and status message
-    """
-    try:
-        result = whatsapp_get_contacts(user_id)
-        return result
-    except Exception as e:
-        return {
-            "success": False,
-            "status": "error",
-            "message": f"Error getting contacts: {str(e)}"
-        }
+#     Returns:
+#         A dictionary containing success status, contacts list, and status message
+#     """
+#     try:
+#         result = whatsapp_get_contacts(user_id)
+#         return result
+#     except Exception as e:
+#         return {
+#             "success": False,
+#             "status": "error",
+#             "message": f"Error getting contacts: {str(e)}"
+#         }
 
 if __name__ == "__main__":
     # Initialize and run the server with SSE transport
