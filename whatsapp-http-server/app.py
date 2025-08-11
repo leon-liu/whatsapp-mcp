@@ -398,8 +398,7 @@ def get_s3_file(url: str = Query(..., description="S3 URL of the file to retriev
             media_type=content_type,
             headers={
                 "Content-Length": str(content_length),
-                "Cache-Control": "public, max-age=3600",
-                "Access-Control-Allow-Origin": "*"
+                "Cache-Control": "public, max-age=3600"
             }
         )
         
