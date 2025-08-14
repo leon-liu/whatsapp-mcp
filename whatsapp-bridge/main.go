@@ -1145,15 +1145,15 @@ func startRESTServer(port int) {
 
 		// Process groups (add groups that might not be in contacts)
 		for _, group := range groups {
-			// Get profile picture for group
-			profilePictureInfo, err := client.GetProfilePictureInfo(group.JID, nil)
-			if err != nil {
-				logger.Warnf("Failed to get profile picture info for group %s: %v", group.JID.String(), err)
-			}
+			// // Get profile picture for group
+			// profilePictureInfo, err := client.GetProfilePictureInfo(group.JID, nil)
+			// if err != nil {
+			// 	logger.Warnf("Failed to get profile picture info for group %s: %v", group.JID.String(), err)
+			// }
 			profileImage := ""
-			if profilePictureInfo != nil {
-				profileImage = profilePictureInfo.URL
-			}
+			// if profilePictureInfo != nil {
+			// 	profileImage = profilePictureInfo.URL
+			// }
 
 			contactResponses = append(contactResponses, ContactResponse{
 				JID:          group.JID.String(),
