@@ -22,7 +22,7 @@ nohup uvicorn app:app --reload --host 0.0.0.0 --port 8040 &
 
 sudo pkill -f "whatsapp-http-server"
 
-
+sudo nginx -s reload
 
 
 {

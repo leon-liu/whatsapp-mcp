@@ -1125,15 +1125,15 @@ func startRESTServer(port int) {
 				name = jid.User
 			}
 
-			// Get profile picture
-			profilePictureInfo, err := client.GetProfilePictureInfo(jid, nil)
-			if err != nil {
-				logger.Warnf("Failed to get profile picture info for contact %s: %v", jid.String(), err)
-			}
+			// // Get profile picture
+			// profilePictureInfo, err := client.GetProfilePictureInfo(jid, nil)
+			// if err != nil {
+			// 	logger.Warnf("Failed to get profile picture info for contact %s: %v", jid.String(), err)
+			// }
 			profileImage := ""
-			if profilePictureInfo != nil {
-				profileImage = profilePictureInfo.URL
-			}
+			// if profilePictureInfo != nil {
+			// 	profileImage = profilePictureInfo.URL
+			// }
 
 			contactResponses = append(contactResponses, ContactResponse{
 				JID:          jid.String(),
