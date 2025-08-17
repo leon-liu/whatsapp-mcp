@@ -29,6 +29,9 @@ sudo nginx -s reload
 source .venv/bin/activate && pip install -r requirements.txt
 
 
+stagehand
+nohup npm run start:server &
+
 
 {
     "mcpServers": {
