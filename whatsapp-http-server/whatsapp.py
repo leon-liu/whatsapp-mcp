@@ -11,6 +11,7 @@ class Chat:
     last_message_time: Optional[datetime]
     last_message: Optional[str] = None
     last_sender: Optional[str] = None
+    last_sender_name: Optional[str] = None
     last_is_from_me: Optional[bool] = None
     media_type: Optional[str] = None
     message_id: Optional[str] = None
@@ -23,6 +24,7 @@ class Chat:
             'last_message_time': self.last_message_time.isoformat() if self.last_message_time else None,
             'last_message': self.last_message,
             'last_sender': self.last_sender,
+            'last_sender_name': self.last_sender_name,
             'last_is_from_me': self.last_is_from_me,
             'media_type': self.media_type,
             'message_id': self.message_id,
@@ -37,7 +39,7 @@ def list_chats(
     include_last_message: bool = True,
     sort_by: str = "last_active"
 ) -> List[Chat]:
-    """Get chats matching the specified criteria."""
+    """Get group chats matching the specified criteria (only JIDs ending with @g.us)."""
     try:
         db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../whatsapp-bridge/store", user_id, "messages.db"))
         conn = sqlite3.connect(db_path)
@@ -54,13 +56,15 @@ def list_chats(
                 messages.is_from_me as last_is_from_me,
                 messages.media_type as last_media_type,
                 messages.id as message_id,
-                messages.timestamp as message_timestamp
+                messages.timestamp as message_timestamp,
+                sender_chat.name as last_sender_name
             FROM chats
         """]
 
         if include_last_message:
             query_parts.append("""
                 LEFT JOIN messages ON chats.jid = messages.chat_jid AND messages.is_from_me = FALSE
+                LEFT JOIN chats sender_chat ON messages.sender = sender_chat.jid
             """)
 
         where_clauses = []
@@ -70,8 +74,8 @@ def list_chats(
             where_clauses.append("(LOWER(chats.name) LIKE LOWER(?) OR chats.jid LIKE ?)")
             params.extend([f"%{query}%", f"%{query}%"])
 
-        # Always filter by allowed contacts
-        where_clauses.append("chats.is_allowed = TRUE")
+        # Always filter by allowed contacts and only groups (JID ending with @g.us)
+        where_clauses.append("chats.is_allowed = TRUE AND chats.jid LIKE '%@g.us'")
 
         if where_clauses:
             query_parts.append("WHERE " + " AND ".join(where_clauses))
@@ -96,6 +100,7 @@ def list_chats(
                 last_message_time=datetime.fromisoformat(chat_data[2]) if chat_data[2] else None,
                 last_message=chat_data[3],
                 last_sender=chat_data[4],
+                last_sender_name=chat_data[9],
                 last_is_from_me=chat_data[5],
                 media_type=chat_data[6],
                 message_id=chat_data[7],
@@ -123,7 +128,7 @@ def get_allowed_contacts(user_id: str) -> dict:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        # Query to get only allowed contacts
+        # Query to get only allowed GROUP contacts (JID ending with @g.us)
         cursor.execute("""
             SELECT 
                 jid,
@@ -131,7 +136,7 @@ def get_allowed_contacts(user_id: str) -> dict:
                 last_message_time,
                 is_allowed
             FROM chats
-            WHERE is_allowed = TRUE
+            WHERE is_allowed = TRUE AND jid LIKE '%@g.us'
             ORDER BY name, jid
         """)
         
@@ -153,7 +158,7 @@ def get_allowed_contacts(user_id: str) -> dict:
             "user_id": user_id,
             "allowed_contacts": result,
             "count": len(result),
-            "message": f"Found {len(result)} allowed contacts for user {user_id}."
+            "message": f"Found {len(result)} allowed group contacts for user {user_id}."
         }
         
     except sqlite3.Error as e:

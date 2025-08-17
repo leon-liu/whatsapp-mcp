@@ -761,20 +761,80 @@ var (
 	clientLocks = make(map[string]*sync.Mutex)
 	qrCodes     = make(map[string][]byte) // userID -> QR PNG bytes
 	loginStatus = make(map[string]string) // userID -> "pending"|"success"|"failed"
+
+	// Global mutexes for thread-safe access to shared maps
+	clientsMutex     sync.RWMutex
+	clientLocksMutex sync.RWMutex
+	qrCodesMutex     sync.RWMutex
+	loginStatusMutex sync.RWMutex
 )
 
+// Helper functions for thread-safe map access
+func getLoginStatus(userID string) (string, bool) {
+	loginStatusMutex.RLock()
+	defer loginStatusMutex.RUnlock()
+	status, ok := loginStatus[userID]
+	return status, ok
+}
+
+func setLoginStatus(userID string, status string) {
+	loginStatusMutex.Lock()
+	defer loginStatusMutex.Unlock()
+	loginStatus[userID] = status
+}
+
+func getQRCode(userID string) ([]byte, bool) {
+	qrCodesMutex.RLock()
+	defer qrCodesMutex.RUnlock()
+	png, ok := qrCodes[userID]
+	return png, ok
+}
+
+func setQRCode(userID string, png []byte) {
+	qrCodesMutex.Lock()
+	defer qrCodesMutex.Unlock()
+	qrCodes[userID] = png
+}
+
+func removeUserData(userID string) {
+	// Clean up all user data when they log out or disconnect
+	clientsMutex.Lock()
+	delete(clients, userID)
+	clientsMutex.Unlock()
+
+	clientLocksMutex.Lock()
+	delete(clientLocks, userID)
+	clientLocksMutex.Unlock()
+
+	qrCodesMutex.Lock()
+	delete(qrCodes, userID)
+	qrCodesMutex.Unlock()
+
+	loginStatusMutex.Lock()
+	delete(loginStatus, userID)
+	loginStatusMutex.Unlock()
+}
+
 func getClientForUser(userID string, logger waLog.Logger) (*whatsmeow.Client, error) {
+	// Get or create client lock with global mutex protection
+	clientLocksMutex.Lock()
 	lock, ok := clientLocks[userID]
 	if !ok {
 		lock = &sync.Mutex{}
 		clientLocks[userID] = lock
 	}
+	clientLocksMutex.Unlock()
+
 	lock.Lock()
 	defer lock.Unlock()
 
+	// Check if client already exists with global mutex protection
+	clientsMutex.RLock()
 	if client, ok := clients[userID]; ok {
+		clientsMutex.RUnlock()
 		return client, nil
 	}
+	clientsMutex.RUnlock()
 	dbLog := waLog.Stdout("Database", "INFO", true)
 	dbPath := fmt.Sprintf("store/%s/whatsapp.db", userID)
 	os.MkdirAll(fmt.Sprintf("store/%s", userID), 0755)
@@ -823,12 +883,21 @@ func getClientForUser(userID string, logger waLog.Logger) (*whatsmeow.Client, er
 			handleHistorySync(client, messageStore, v, logger)
 		case *events.Connected:
 			logger.Infof("User %s connected to WhatsApp", userID)
+		case *events.Disconnected:
+			logger.Warnf("User %s disconnected from WhatsApp", userID)
+			// Clean up user data when they disconnect
+			go removeUserData(userID)
 		case *events.LoggedOut:
 			logger.Warnf("User %s logged out, please scan QR code to log in again", userID)
+			// Clean up user data when they log out
+			go removeUserData(userID)
 		}
 	})
 
+	// Store client with global mutex protection
+	clientsMutex.Lock()
 	clients[userID] = client
+	clientsMutex.Unlock()
 	return client, nil
 }
 
@@ -852,7 +921,10 @@ func startRESTServer(port int) {
 			return
 		}
 		// If QR already generated and still valid, return it
-		if png, ok := qrCodes[userID]; ok && loginStatus[userID] == "pending" {
+		png, qrOk := getQRCode(userID)
+		status, statusOk := getLoginStatus(userID)
+
+		if qrOk && statusOk && status == "pending" {
 			w.Header().Set("Content-Type", "image/png")
 			w.Write(png)
 			return
@@ -863,15 +935,15 @@ func startRESTServer(port int) {
 			for evt := range qrChan {
 				if evt.Event == "code" {
 					png, _ := qrcode.Encode(evt.Code, qrcode.Medium, 256)
-					qrCodes[userID] = png
-					loginStatus[userID] = "pending"
+					setQRCode(userID, png)
+					setLoginStatus(userID, "pending")
 					fmt.Printf("QR code generated for user %s\n", userID)
 				} else if evt.Event == "success" {
-					loginStatus[userID] = "success"
+					setLoginStatus(userID, "success")
 					fmt.Printf("User %s logged in successfully\n", userID)
 					break
 				} else if evt.Event == "timeout" || evt.Event == "error" {
-					loginStatus[userID] = "failed"
+					setLoginStatus(userID, "failed")
 					fmt.Printf("User %s login failed or timed out\n", userID)
 					break
 				}
@@ -884,7 +956,7 @@ func startRESTServer(port int) {
 		}
 		// Wait for QR to be generated
 		for i := 0; i < 20; i++ {
-			if png, ok := qrCodes[userID]; ok {
+			if png, ok := getQRCode(userID); ok {
 				w.Header().Set("Content-Type", "image/png")
 				w.Write(png)
 				return
@@ -912,7 +984,7 @@ func startRESTServer(port int) {
 		// Check if user has a valid session stored
 		if client.Store.ID == nil {
 			// No session stored, check in-memory status
-			status, ok := loginStatus[userID]
+			status, ok := getLoginStatus(userID)
 			if !ok {
 				status = "not_started"
 			}
@@ -925,7 +997,7 @@ func startRESTServer(port int) {
 		// User has a session stored, check connection status
 		if client.IsConnected() {
 			status := "success"
-			loginStatus[userID] = status // Update in-memory status
+			setLoginStatus(userID, status) // Update in-memory status
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]string{"status": status})
 			fmt.Printf("Login status for user %s: %s (connected)\n", userID, status)
@@ -934,13 +1006,13 @@ func startRESTServer(port int) {
 			err = client.Connect()
 			if err != nil {
 				status := "failed"
-				loginStatus[userID] = status
+				setLoginStatus(userID, status)
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(map[string]string{"status": status})
 				fmt.Printf("Login status for user %s: %s (connection failed: %v)\n", userID, status, err)
 			} else {
 				status := "success"
-				loginStatus[userID] = status
+				setLoginStatus(userID, status)
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(map[string]string{"status": status})
 				fmt.Printf("Login status for user %s: %s (reconnected)\n", userID, status)

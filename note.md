@@ -8,6 +8,7 @@ ubuntu@ip-172-31-11-224:~/whatsapp-mcp/whatsapp-bridge$ nohup ./whatsapp-bridge 
 ubuntu@ip-172-31-11-224:~/whatsapp-mcp/whatsapp-bridge$ ps aux | grep whatsapp-bridge
 
 ubuntu@ip-172-31-11-224:~/whatsapp-mcp/whatsapp-bridge$ nohup /usr/local/go/bin/go run main.go &
+ubuntu@ip-172-31-11-224:~/whatsapp-mcp/whatsapp-bridge$ nohup /usr/local/go/bin/go run . &
 
 
 whatspp-mcp-server
@@ -23,6 +24,10 @@ nohup uvicorn app:app --reload --host 0.0.0.0 --port 8040 &
 sudo pkill -f "whatsapp-http-server"
 
 sudo nginx -s reload
+
+
+source .venv/bin/activate && pip install -r requirements.txt
+
 
 
 {

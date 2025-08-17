@@ -56,6 +56,7 @@ class Chat:
     last_message_time: Optional[datetime]
     last_message: Optional[str] = None
     last_sender: Optional[str] = None
+    last_sender_name: Optional[str] = None
     last_is_from_me: Optional[bool] = None
 
     @property
@@ -70,6 +71,7 @@ class Chat:
             'last_message_time': self.last_message_time.isoformat() if self.last_message_time else None,
             'last_message': self.last_message,
             'last_sender': self.last_sender,
+            'last_sender_name': self.last_sender_name,
             'last_is_from_me': self.last_is_from_me,
             'is_group': self.is_group
         }
@@ -227,8 +229,8 @@ def list_messages(
             where_clauses.append("LOWER(messages.content) LIKE LOWER(?)")
             params.append(f"%{query}%")
             
-        # Always filter by allowed contacts
-        where_clauses.append("chats.is_allowed = TRUE")
+        # Always filter by allowed contacts and only groups (JID ending with @g.us)
+        where_clauses.append("chats.is_allowed = TRUE AND chats.jid LIKE '%@g.us'")
             
         if where_clauses:
             query_parts.append("WHERE " + " AND ".join(where_clauses))
@@ -383,7 +385,7 @@ def list_chats(user_id: str,
     include_last_message: bool = True,
     sort_by: str = "last_active"
 ) -> List[Chat]:
-    """Get chats matching the specified criteria."""
+    """Get group chats matching the specified criteria (only JIDs ending with @g.us)."""
     try:
         db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../whatsapp-bridge/store", user_id, "messages.db"))
         print("DB path:", db_path)
@@ -399,7 +401,8 @@ def list_chats(user_id: str,
                 chats.last_message_time,
                 messages.content as last_message,
                 messages.sender as last_sender,
-                messages.is_from_me as last_is_from_me
+                messages.is_from_me as last_is_from_me,
+                sender_chat.name as last_sender_name
             FROM chats
         """]
         
@@ -407,6 +410,7 @@ def list_chats(user_id: str,
             query_parts.append("""
                 LEFT JOIN messages ON chats.jid = messages.chat_jid 
                 AND chats.last_message_time = messages.timestamp
+                LEFT JOIN chats sender_chat ON messages.sender = sender_chat.jid
             """)
             
         where_clauses = []
@@ -416,8 +420,8 @@ def list_chats(user_id: str,
             where_clauses.append("(LOWER(chats.name) LIKE LOWER(?) OR chats.jid LIKE ?)")
             params.extend([f"%{query}%", f"%{query}%"])
             
-        # Always filter by allowed contacts
-        where_clauses.append("chats.is_allowed = TRUE")
+        # Always filter by allowed contacts and only groups (JID ending with @g.us)
+        where_clauses.append("chats.is_allowed = TRUE AND chats.jid LIKE '%@g.us'")
             
         if where_clauses:
             query_parts.append("WHERE " + " AND ".join(where_clauses))
@@ -442,6 +446,7 @@ def list_chats(user_id: str,
                 last_message_time=datetime.fromisoformat(chat_data[2]) if chat_data[2] else None,
                 last_message=chat_data[3],
                 last_sender=chat_data[4],
+                last_sender_name=chat_data[6],
                 last_is_from_me=chat_data[5]
             )
             result.append(chat)
@@ -503,7 +508,7 @@ def search_contacts(query: str, user_id: Optional[str] = None) -> List[Contact]:
 
 
 def get_contact_chats(user_id: str, jid: str, limit: int = 20, page: int = 0) -> List[Chat]:
-    """Get all chats involving the contact.
+    """Get all group chats involving the contact (only JIDs ending with @g.us).
     
     Args:
         jid: The contact's JID to search for
@@ -527,7 +532,7 @@ def get_contact_chats(user_id: str, jid: str, limit: int = 20, page: int = 0) ->
                 m.is_from_me as last_is_from_me
             FROM chats c
             JOIN messages m ON c.jid = m.chat_jid
-            WHERE m.sender = ? OR c.jid = ?
+            WHERE (m.sender = ? OR c.jid = ?) AND c.jid LIKE '%@g.us'
             ORDER BY c.last_message_time DESC
             LIMIT ? OFFSET ?
         """, (jid, jid, limit, page * limit))
@@ -542,6 +547,7 @@ def get_contact_chats(user_id: str, jid: str, limit: int = 20, page: int = 0) ->
                 last_message_time=datetime.fromisoformat(chat_data[2]) if chat_data[2] else None,
                 last_message=chat_data[3],
                 last_sender=chat_data[4],
+                last_sender_name=None,  # This function doesn't include sender name
                 last_is_from_me=chat_data[5]
             )
             result.append(chat)
@@ -557,7 +563,7 @@ def get_contact_chats(user_id: str, jid: str, limit: int = 20, page: int = 0) ->
 
 
 def get_last_interaction(user_id: str, jid: str) -> str:
-    """Get most recent message involving the contact."""
+    """Get most recent message involving the group contact (only JIDs ending with @g.us)."""
     try:
         db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../whatsapp-bridge/store", user_id, "messages.db"))
         print("DB path:", db_path)
@@ -577,7 +583,7 @@ def get_last_interaction(user_id: str, jid: str) -> str:
                 m.media_type
             FROM messages m
             JOIN chats c ON m.chat_jid = c.jid
-            WHERE m.sender = ? OR c.jid = ?
+            WHERE (m.sender = ? OR c.jid = ?) AND c.jid LIKE '%@g.us'
             ORDER BY m.timestamp DESC
             LIMIT 1
         """, (jid, jid))
@@ -652,6 +658,7 @@ def get_chat(user_id: str, chat_jid: str, include_last_message: bool = True) -> 
             last_message_time=datetime.fromisoformat(chat_data[2]) if chat_data[2] else None,
             last_message=chat_data[3],
             last_sender=chat_data[4],
+            last_sender_name=None,  # This function doesn't include sender name
             last_is_from_me=chat_data[5]
         )
         
@@ -698,6 +705,7 @@ def get_direct_chat_by_contact(user_id: str, sender_phone_number: str) -> Option
             last_message_time=datetime.fromisoformat(chat_data[2]) if chat_data[2] else None,
             last_message=chat_data[3],
             last_sender=chat_data[4],
+            last_sender_name=None,  # This function doesn't include sender name
             last_is_from_me=chat_data[5]
         )
         

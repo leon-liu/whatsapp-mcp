@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.responses import Response
+from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 from pydantic import BaseModel
 import requests
@@ -9,7 +10,14 @@ from s3_service import s3_service
 
 app = FastAPI()
 
-# CORS is handled by nginx reverse proxy
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8081", "http://localhost:3000", "http://localhost:5173"],  # Add your frontend URLs
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # WhatsApp API base URL
 WHATSAPP_API_BASE_URL = "http://localhost:8080/api"
