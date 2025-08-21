@@ -418,40 +418,54 @@ func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message str
 }
 
 // Extract media info from a message
-func extractMediaInfo(msg *waProto.Message) (mediaType string, filename string, url string, mediaKey []byte, fileSHA256 []byte, fileEncSHA256 []byte, fileLength uint64) {
+func extractMediaInfo(msg *waProto.Message) (mediaType string, filename string, url string, mediaKey []byte, fileSHA256 []byte, fileEncSHA256 []byte, fileLength uint64, caption string) {
 	if msg == nil {
-		return "", "", "", nil, nil, nil, 0
+		return "", "", "", nil, nil, nil, 0, ""
 	}
-
+	
 	// Check for image message
 	if img := msg.GetImageMessage(); img != nil {
-		return "image", "image_" + time.Now().Format("20060102_150405") + ".jpg",
-			img.GetURL(), img.GetMediaKey(), img.GetFileSHA256(), img.GetFileEncSHA256(), img.GetFileLength()
+		filename = "image_" + time.Now().Format("20060102_150405.000") + ".jpg"
+		return "image", filename,
+			img.GetURL(), img.GetMediaKey(), img.GetFileSHA256(), img.GetFileEncSHA256(), img.GetFileLength(), img.GetCaption()
 	}
 
 	// Check for video message
 	if vid := msg.GetVideoMessage(); vid != nil {
-		return "video", "video_" + time.Now().Format("20060102_150405") + ".mp4",
-			vid.GetURL(), vid.GetMediaKey(), vid.GetFileSHA256(), vid.GetFileEncSHA256(), vid.GetFileLength()
+		return "video", "video_" + time.Now().Format("20060102_150405.000") + ".mp4",
+			vid.GetURL(), vid.GetMediaKey(), vid.GetFileSHA256(), vid.GetFileEncSHA256(), vid.GetFileLength(), vid.GetCaption()
 	}
 
 	// Check for audio message
 	if aud := msg.GetAudioMessage(); aud != nil {
-		return "audio", "audio_" + time.Now().Format("20060102_150405") + ".ogg",
-			aud.GetURL(), aud.GetMediaKey(), aud.GetFileSHA256(), aud.GetFileEncSHA256(), aud.GetFileLength()
+		return "audio", "audio_" + time.Now().Format("20060102_150405.000") + ".ogg",
+			aud.GetURL(), aud.GetMediaKey(), aud.GetFileSHA256(), aud.GetFileEncSHA256(), aud.GetFileLength(), ""
 	}
 
 	// Check for document message
 	if doc := msg.GetDocumentMessage(); doc != nil {
 		filename := doc.GetFileName()
 		if filename == "" {
-			filename = "document_" + time.Now().Format("20060102_150405")
+			filename = "document_" + time.Now().Format("20060102_150405.000")
 		}
 		return "document", filename,
-			doc.GetURL(), doc.GetMediaKey(), doc.GetFileSHA256(), doc.GetFileEncSHA256(), doc.GetFileLength()
+			doc.GetURL(), doc.GetMediaKey(), doc.GetFileSHA256(), doc.GetFileEncSHA256(), doc.GetFileLength(), doc.GetCaption()
 	}
 
-	return "", "", "", nil, nil, nil, 0
+	// Check for document with caption message
+	if doc := msg.GetDocumentWithCaptionMessage(); doc != nil {
+		// Check for document message
+		if docMsg := doc.GetMessage().GetDocumentMessage(); docMsg != nil {
+			filename := docMsg.GetFileName()
+			if filename == "" {
+				filename = "document_" + time.Now().Format("20060102_150405.000")
+			}
+			return "document", filename,
+				docMsg.GetURL(), docMsg.GetMediaKey(), docMsg.GetFileSHA256(), docMsg.GetFileEncSHA256(), docMsg.GetFileLength(), docMsg.GetCaption()
+		}
+	}
+
+	return "", "", "", nil, nil, nil, 0, ""
 }
 
 // Handle regular incoming messages with media support
@@ -471,9 +485,13 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 
 	// Extract text content
 	content := extractTextContent(msg.Message)
-	fmt.Printf("content===: %s\n", content)
+	
 	// Extract media info
-	mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength := extractMediaInfo(msg.Message)
+	mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength, caption := extractMediaInfo(msg.Message)
+
+	if caption != "" {
+		content = caption
+	}
 
 	// Skip if there's no content and no media
 	if content == "" && mediaType == "" {
@@ -1545,12 +1563,16 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 				}
 
 				// Extract media info
-				var mediaType, filename, url string
+				var mediaType, filename, url, caption string
 				var mediaKey, fileSHA256, fileEncSHA256 []byte
 				var fileLength uint64
 
 				if msg.Message.Message != nil {
-					mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength = extractMediaInfo(msg.Message.Message)
+					mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength, caption = extractMediaInfo(msg.Message.Message)
+				}
+
+				if caption != "" {
+					content = caption
 				}
 
 				// Log the message content for debugging
