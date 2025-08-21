@@ -417,4 +417,39 @@ def test_s3_url(url: str = Query(..., description="S3 URL to test")):
             "content_type": content_type
         }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e)) 
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/logout")
+def logout(user_id: str = Query(..., description="User ID to logout")):
+    """
+    Logout a user from WhatsApp by calling the WhatsApp bridge API.
+    Returns logout status and message.
+    """
+    try:
+        # Call the WhatsApp bridge logout endpoint
+        url = f"{WHATSAPP_API_BASE_URL}/logout?user_id={user_id}"
+        
+        response = requests.post(url)
+        response.raise_for_status()
+        
+        # Parse the response from WhatsApp bridge
+        bridge_response = response.json()
+        
+        return {
+            "success": bridge_response.get("success", False),
+            "message": bridge_response.get("message", ""),
+            "user_id": bridge_response.get("user_id", user_id)
+        }
+        
+    except requests.exceptions.RequestException as e:
+        return {
+            "success": False,
+            "message": f"Network error while logging out: {str(e)}",
+            "user_id": user_id
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Error logging out: {str(e)}",
+            "user_id": user_id
+        } 
