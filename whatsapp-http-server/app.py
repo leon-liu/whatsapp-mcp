@@ -320,7 +320,7 @@ def get_allowed_contacts_endpoint(user_id: str = Query(..., description="User ID
 def get_chats(
     user_id: str = Query(..., description="User ID to fetch chats for"),
     query: Optional[str] = Query(None),
-    limit: int = Query(20),
+    limit: int = Query(2000),
     page: int = Query(0),
     include_last_message: bool = Query(True),
     sort_by: str = Query("last_active")
