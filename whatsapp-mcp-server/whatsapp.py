@@ -217,7 +217,7 @@ def list_messages(
         if sender_phone_number:
             where_clauses.append("messages.sender = ?")
             params.append(sender_phone_number)
-        print(chat_jid)
+        
         if chat_jid:
             # Ensure chat_jid has the proper suffix
             if not chat_jid.endswith("@s.whatsapp.net") and not chat_jid.endswith("@g.us"):
@@ -268,7 +268,7 @@ def list_messages(
                 messages_with_context.extend(context.after)
             
             return messages_with_context
-            
+        
         # Return messages without context
         return result
         

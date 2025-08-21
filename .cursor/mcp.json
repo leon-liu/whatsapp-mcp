@@ -8,9 +8,16 @@
     // },
     "playwright": {
       "url": "https://mcp-playwright.ai-trends.io/sse"
-    }
+    },
     // "playwright": {
     //   "url": "http://99.80.21.173:8931/sse"
     // }
+    "google-mcp-remote": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://google-mcp-remote.thisisleonliu.workers.dev/sse"
+      ]
+    }
   }
 }
