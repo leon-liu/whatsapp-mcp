@@ -104,9 +104,12 @@ func (store *MessageStore) Close() error {
 
 // Store a chat in the database
 func (store *MessageStore) StoreChat(jid, name string, lastMessageTime time.Time) error {
+	// Determine is_allowed based on JID suffix
+	isAllowed := strings.HasSuffix(jid, "@g.us")
+	fmt.Printf("isAllowed================================: %v\n", isAllowed)
 	_, err := store.db.Exec(
-		"INSERT OR REPLACE INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)",
-		jid, name, lastMessageTime,
+		"INSERT OR REPLACE INTO chats (jid, name, last_message_time, is_allowed) VALUES (?, ?, ?, ?)",
+		jid, name, lastMessageTime, isAllowed,
 	)
 	return err
 }
@@ -459,7 +462,7 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 
 	// Get appropriate chat name (pass nil for conversation since we don't have one for regular messages)
 	name := GetChatName(client, messageStore, msg.Info.Chat, chatJID, nil, sender, logger)
-
+	fmt.Printf("chatJID===: %s\n", chatJID)
 	// Update chat in database with the message timestamp (keeps last message time updated)
 	err := messageStore.StoreChat(chatJID, name, msg.Info.Timestamp)
 	if err != nil {
@@ -468,7 +471,7 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 
 	// Extract text content
 	content := extractTextContent(msg.Message)
-
+	fmt.Printf("content===: %s\n", content)
 	// Extract media info
 	mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength := extractMediaInfo(msg.Message)
 
@@ -827,13 +830,14 @@ func getClientForUser(userID string, logger waLog.Logger) (*whatsmeow.Client, er
 
 	lock.Lock()
 	defer lock.Unlock()
-
+	fmt.Printf("getClientForUser: %s\n", userID)
 	// Check if client already exists with global mutex protection
 	clientsMutex.RLock()
 	if client, ok := clients[userID]; ok {
 		clientsMutex.RUnlock()
 		return client, nil
 	}
+
 	clientsMutex.RUnlock()
 	dbLog := waLog.Stdout("Database", "INFO", true)
 	dbPath := fmt.Sprintf("store/%s/whatsapp.db", userID)
@@ -849,11 +853,11 @@ func getClientForUser(userID string, logger waLog.Logger) (*whatsmeow.Client, er
 		return nil, err
 	}
 	client := whatsmeow.NewClient(deviceStore, logger)
-
 	// Register event handler for this user
 	client.AddEventHandler(func(evt interface{}) {
 		switch v := evt.(type) {
 		case *events.Message:
+			fmt.Printf("AddEventHandler message: %s\n", userID)
 			messageStore, err := getMessageStoreForUser(userID)
 			if err != nil {
 				logger.Warnf("Failed to get message store: %v", err)
@@ -875,6 +879,7 @@ func getClientForUser(userID string, logger waLog.Logger) (*whatsmeow.Client, er
 
 			handleMessage(client, messageStore, v, logger)
 		case *events.HistorySync:
+			fmt.Printf("AddEventHandler HistorySync: %s\n", userID)
 			messageStore, err := getMessageStoreForUser(userID)
 			if err != nil {
 				logger.Warnf("Failed to get message store: %v", err)
@@ -1288,6 +1293,66 @@ func startRESTServer(port int) {
 			Message: fmt.Sprintf("Successfully allowed %d contacts", allowed),
 			Allowed: allowed,
 		})
+	})
+
+	// Handler for logging out users
+	http.HandleFunc("/api/logout", func(w http.ResponseWriter, r *http.Request) {
+		userID := r.URL.Query().Get("user_id")
+		if userID == "" {
+			http.Error(w, "user_id required", http.StatusBadRequest)
+			return
+		}
+
+		// Only allow POST requests
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		logger := waLog.Stdout("Client", "INFO", true)
+		client, err := getClientForUser(userID, logger)
+		if err != nil {
+			http.Error(w, "Failed to get client: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Check if client is connected
+		if !client.IsConnected() {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "Client is not connected",
+			})
+			return
+		}
+
+		// Logout the client
+		err = client.Logout(context.Background())
+		if err != nil {
+			logger.Errorf("Failed to logout user %s: %v", userID, err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "Failed to logout: " + err.Error(),
+			})
+			return
+		}
+
+		// Clean up user data after successful logout
+		go removeUserData(userID)
+
+		// Set response headers
+		w.Header().Set("Content-Type", "application/json")
+
+		// Send success response
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "Successfully logged out",
+			"user_id": userID,
+		})
+
+		logger.Infof("User %s successfully logged out", userID)
 	})
 
 	// Start the server
