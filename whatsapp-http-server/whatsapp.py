@@ -63,7 +63,7 @@ def list_chats(
 
         if include_last_message:
             query_parts.append("""
-                LEFT JOIN messages ON chats.jid = messages.chat_jid AND messages.is_from_me = FALSE
+                LEFT JOIN messages ON chats.jid = messages.chat_jid
                 LEFT JOIN chats sender_chat ON messages.sender = sender_chat.jid
             """)
 
