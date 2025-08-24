@@ -1,3 +1,4 @@
+login ssh
 ssh -i "~/Downloads/aidirectorycrawler.pem" ubuntu@ec2-99-80-21-173.eu-west-1.compute.amazonaws.com
 
 

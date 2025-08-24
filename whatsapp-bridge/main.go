@@ -422,7 +422,7 @@ func extractMediaInfo(msg *waProto.Message) (mediaType string, filename string, 
 	if msg == nil {
 		return "", "", "", nil, nil, nil, 0, ""
 	}
-	
+
 	// Check for image message
 	if img := msg.GetImageMessage(); img != nil {
 		filename = "image_" + time.Now().Format("20060102_150405.000") + ".jpg"
