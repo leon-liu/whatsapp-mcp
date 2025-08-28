@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel
 import requests
 import base64
@@ -56,6 +56,8 @@ class ContactModel(BaseModel):
     name: str
     profile_image: Optional[str] = None
     is_group: bool
+    unread_count: Optional[int] = 0
+    last_message_time: Optional[str] = None
 
 class ContactsResponse(BaseModel):
     success: bool
@@ -82,6 +84,7 @@ class AllowedContactModel(BaseModel):
     last_message_time: Optional[str]
     is_allowed: bool
     is_group: bool
+    unread_count: Optional[int] = 0
 
 class AllowedContactsResponse(BaseModel):
     success: bool
@@ -100,6 +103,26 @@ class DownloadMediaResponse(BaseModel):
     filename: Optional[str] = None
     path: Optional[str] = None
     s3_url: Optional[str] = None
+
+class MessageModel(BaseModel):
+    id: str
+    chat_jid: str
+    sender: str
+    content: str
+    timestamp: str
+    is_from_me: bool
+    media_type: Optional[str] = None
+    filename: Optional[str] = None
+    url: Optional[str] = None
+
+class GetMessagesRequest(BaseModel):
+    message_ids: List[str]
+
+class GetMessagesResponse(BaseModel):
+    success: bool
+    message: str
+    messages: List[MessageModel]
+    count: int
 
 @app.post("/login", response_model=LoginResponse)
 def login(request: LoginRequest):
@@ -220,7 +243,9 @@ def get_contacts(user_id: str = Query(..., description="User ID to fetch contact
                     jid=contact.get("jid", ""),
                     name=contact.get("name", ""),
                     profile_image=contact.get("profile_image"),
-                    is_group=contact.get("is_group", False)
+                    is_group=contact.get("is_group", False),
+                    unread_count=contact.get("unread_count", 0),
+                    last_message_time=contact.get("last_message_time")
                 ))
             
             return ContactsResponse(
@@ -292,29 +317,29 @@ def allow_contacts(request: AllowContactsRequest):
             allowed=0
         )
 
-@app.get("/allow_contacts", response_model=AllowedContactsResponse)
-def get_allowed_contacts_endpoint(user_id: str = Query(..., description="User ID to fetch allowed contacts for")):
-    """
-    Get all allowed contacts for a specific user by reading directly from the database.
-    Returns list of contacts that have is_allowed = TRUE.
-    """
-    try:
-        result = get_allowed_contacts(user_id=user_id)
-        return AllowedContactsResponse(
-            success=result.get("success", False),
-            user_id=result.get("user_id", user_id),
-            allowed_contacts=result.get("allowed_contacts", []),
-            count=result.get("count", 0),
-            message=result.get("message", "")
-        )
-    except Exception as e:
-        return AllowedContactsResponse(
-            success=False,
-            user_id=user_id,
-            allowed_contacts=[],
-            count=0,
-            message=f"Error getting allowed contacts: {str(e)}"
-        )
+# @app.get("/allow_contacts", response_model=AllowedContactsResponse)
+# def get_allowed_contacts_endpoint(user_id: str = Query(..., description="User ID to fetch allowed contacts for")):
+#     """
+#     Get all allowed contacts for a specific user by reading directly from the database.
+#     Returns list of contacts that have is_allowed = TRUE.
+#     """
+#     try:
+#         result = get_allowed_contacts(user_id=user_id)
+#         return AllowedContactsResponse(
+#             success=result.get("success", False),
+#             user_id=result.get("user_id", user_id),
+#             allowed_contacts=result.get("allowed_contacts", []),
+#             count=result.get("count", 0),
+#             message=result.get("message", "")
+#         )
+#     except Exception as e:
+#         return AllowedContactsResponse(
+#             success=False,
+#             user_id=user_id,
+#             allowed_contacts=[],
+#             count=0,
+#             message=f"Error getting allowed contacts: {str(e)}"
+#         )
 
 @app.get("/chats", response_model=list[ChatModel])
 def get_chats(
@@ -374,6 +399,65 @@ def download_media(
         return DownloadMediaResponse(
             success=False,
             message=f"Error downloading media: {str(e)}"
+        )
+
+@app.post("/get_messages", response_model=GetMessagesResponse)
+def get_messages_by_ids(
+    request: GetMessagesRequest,
+    user_id: str = Query(..., description="User ID to fetch messages for")
+):
+    """
+    Get details of specific WhatsApp messages by their message IDs.
+    Returns a list of message details.
+    """
+    try:
+        url = f"{WHATSAPP_API_BASE_URL}/get_messages"
+        response = requests.post(url, json={
+            "user_id": user_id,
+            "message_ids": request.message_ids
+        }, timeout=10) # Increased timeout for this specific endpoint
+        
+        if response.status_code == 200:
+            messages_data = response.json()
+            messages = []
+            for msg in messages_data:
+                messages.append(MessageModel(
+                    id=msg.get("id", ""),
+                    chat_jid=msg.get("chat_jid", ""),
+                    sender=msg.get("sender", ""),
+                    content=msg.get("content", ""),
+                    timestamp=msg.get("timestamp", ""),
+                    is_from_me=msg.get("is_from_me", False),
+                    media_type=msg.get("media_type"),
+                    filename=msg.get("filename"),
+                    url=msg.get("url")
+                ))
+            return GetMessagesResponse(
+                success=True,
+                message="Messages retrieved successfully",
+                messages=messages,
+                count=len(messages)
+            )
+        else:
+            return GetMessagesResponse(
+                success=False,
+                message=f"Failed to get messages: HTTP {response.status_code} - {response.text}",
+                messages=[],
+                count=0
+            )
+    except requests.exceptions.RequestException as e:
+        return GetMessagesResponse(
+            success=False,
+            message=f"Network error while getting messages: {str(e)}",
+            messages=[],
+            count=0
+        )
+    except Exception as e:
+        return GetMessagesResponse(
+            success=False,
+            message=f"Error getting messages: {str(e)}",
+            messages=[],
+            count=0
         )
 
 @app.get("/api/s3-file")

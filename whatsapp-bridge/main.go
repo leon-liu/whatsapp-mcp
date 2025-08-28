@@ -43,9 +43,99 @@ type Message struct {
 	Filename  string
 }
 
+// ChatInfo represents chat information with unread count
+type ChatInfo struct {
+	JID             string    `json:"jid"`
+	Name            string    `json:"name"`
+	LastMessageTime time.Time `json:"last_message_time"`
+	IsAllowed       bool      `json:"is_allowed"`
+	UnreadCount     int       `json:"unread_count"`
+}
+
 // Database handler for storing message history
 type MessageStore struct {
 	db *sql.DB
+}
+
+// migrateDatabase adds new columns to existing databases
+func migrateDatabase(db *sql.DB) error {
+	// Check if unread_count column exists
+	var columnExists bool
+	err := db.QueryRow(`
+		SELECT COUNT(*) > 0 
+		FROM pragma_table_info('chats') 
+		WHERE name = 'unread_count'
+	`).Scan(&columnExists)
+	if err != nil {
+		return fmt.Errorf("failed to check column existence: %v", err)
+	}
+
+	// Add unread_count column if it doesn't exist
+	if !columnExists {
+		fmt.Println("Adding unread_count column to existing chats table")
+		_, err = db.Exec(`ALTER TABLE chats ADD COLUMN unread_count INTEGER DEFAULT 0`)
+		if err != nil {
+			// If ALTER TABLE fails, try to recreate the table
+			fmt.Println("ALTER TABLE failed, attempting table recreation...")
+			return recreateTableWithNewSchema(db)
+		}
+		fmt.Println("Added unread_count column to existing chats table")
+	}
+
+	return nil
+}
+
+// recreateTableWithNewSchema recreates the chats table with the new schema
+func recreateTableWithNewSchema(db *sql.DB) error {
+	// Begin transaction
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %v", err)
+	}
+	defer tx.Rollback() // Will rollback if not committed
+
+	// Create new table with new schema
+	_, err = tx.Exec(`
+		CREATE TABLE chats_new (
+			jid TEXT PRIMARY KEY,
+			name TEXT,
+			last_message_time TIMESTAMP,
+			is_allowed BOOLEAN DEFAULT FALSE,
+			unread_count INTEGER DEFAULT 0
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create new table: %v", err)
+	}
+
+	// Copy data from old table to new table
+	_, err = tx.Exec(`
+		INSERT INTO chats_new (jid, name, last_message_time, is_allowed)
+		SELECT jid, name, last_message_time, is_allowed FROM chats
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to copy data: %v", err)
+	}
+
+	// Drop old table
+	_, err = tx.Exec(`DROP TABLE chats`)
+	if err != nil {
+		return fmt.Errorf("failed to drop old table: %v", err)
+	}
+
+	// Rename new table to original name
+	_, err = tx.Exec(`ALTER TABLE chats_new RENAME TO chats`)
+	if err != nil {
+		return fmt.Errorf("failed to rename table: %v", err)
+	}
+
+	// Commit transaction
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %v", err)
+	}
+
+	fmt.Println("Successfully recreated chats table with new schema")
+	return nil
 }
 
 // Initialize message store
@@ -68,7 +158,8 @@ func NewMessageStore(userID string) (*MessageStore, error) {
 			jid TEXT PRIMARY KEY,
 			name TEXT,
 			last_message_time TIMESTAMP,
-			is_allowed BOOLEAN DEFAULT FALSE
+			is_allowed BOOLEAN DEFAULT FALSE,
+			unread_count INTEGER DEFAULT 0
 		);
 		
 		CREATE TABLE IF NOT EXISTS messages (
@@ -103,13 +194,12 @@ func (store *MessageStore) Close() error {
 }
 
 // Store a chat in the database
-func (store *MessageStore) StoreChat(jid, name string, lastMessageTime time.Time) error {
+func (store *MessageStore) StoreChat(jid, name string, lastMessageTime time.Time, unreadCount int) error {
 	// Determine is_allowed based on JID suffix
 	isAllowed := strings.HasSuffix(jid, "@g.us")
-	fmt.Printf("isAllowed================================: %v\n", isAllowed)
 	_, err := store.db.Exec(
-		"INSERT OR REPLACE INTO chats (jid, name, last_message_time, is_allowed) VALUES (?, ?, ?, ?)",
-		jid, name, lastMessageTime, isAllowed,
+		"INSERT OR REPLACE INTO chats (jid, name, last_message_time, is_allowed, unread_count) VALUES (?, ?, ?, ?, ?)",
+		jid, name, lastMessageTime, isAllowed, unreadCount,
 	)
 	return err
 }
@@ -152,6 +242,66 @@ func (store *MessageStore) GetMessages(chatJID string, limit int) ([]Message, er
 		}
 		msg.Time = timestamp
 		messages = append(messages, msg)
+	}
+
+	return messages, nil
+}
+
+// Get messages by their IDs
+func (store *MessageStore) GetMessagesByIDs(messageIDs []string) ([]map[string]interface{}, error) {
+	// Build the query with placeholders for multiple message IDs
+	placeholders := make([]string, len(messageIDs))
+	args := make([]interface{}, len(messageIDs))
+	for i, id := range messageIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf(`
+		SELECT 
+			m.id,
+			m.chat_jid,
+			m.sender,
+			m.content,
+			m.timestamp,
+			m.is_from_me,
+			m.media_type,
+			m.filename,
+			m.url
+		FROM messages m
+		WHERE m.id IN (%s)
+		ORDER BY m.timestamp DESC
+	`, strings.Join(placeholders, ","))
+
+	rows, err := store.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var messages []map[string]interface{}
+	for rows.Next() {
+		var id, chatJID, sender, content, mediaType, filename, url string
+		var timestamp time.Time
+		var isFromMe bool
+
+		err := rows.Scan(&id, &chatJID, &sender, &content, &timestamp, &isFromMe, &mediaType, &filename, &url)
+		if err != nil {
+			return nil, err
+		}
+
+		message := map[string]interface{}{
+			"id":         id,
+			"chat_jid":   chatJID,
+			"sender":     sender,
+			"content":    content,
+			"timestamp":  timestamp.Format(time.RFC3339),
+			"is_from_me": isFromMe,
+			"media_type": mediaType,
+			"filename":   filename,
+			"url":        url,
+		}
+		messages = append(messages, message)
 	}
 
 	return messages, nil
@@ -473,19 +623,33 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 	// Save message to database
 	chatJID := msg.Info.Chat.String()
 	sender := msg.Info.Sender.User
+	// senderName := msg.Message.GetContactMessage().GetDisplayName()
 
 	// Get appropriate chat name (pass nil for conversation since we don't have one for regular messages)
 	name := GetChatName(client, messageStore, msg.Info.Chat, chatJID, nil, sender, logger)
 	fmt.Printf("chatJID===: %s\n", chatJID)
-	// Update chat in database with the message timestamp (keeps last message time updated)
-	err := messageStore.StoreChat(chatJID, name, msg.Info.Timestamp)
+	// Get current unread count and increment it for new message
+	currentUnreadCount, err := messageStore.GetUnreadCount(chatJID)
+	if err != nil {
+		logger.Warnf("Failed to get current unread count: %v", err)
+		currentUnreadCount = 0
+	}
+
+	// Increment unread count for new message (if not from me)
+	newUnreadCount := currentUnreadCount
+	if !msg.Info.IsFromMe {
+		newUnreadCount++
+	}
+
+	// Update chat in database with the message timestamp and new unread count
+	err = messageStore.StoreChat(chatJID, name, msg.Info.Timestamp, newUnreadCount)
 	if err != nil {
 		logger.Warnf("Failed to store chat: %v", err)
 	}
 
 	// Extract text content
 	content := extractTextContent(msg.Message)
-	
+
 	// Extract media info
 	mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength, caption := extractMediaInfo(msg.Message)
 
@@ -551,10 +715,12 @@ type DownloadMediaResponse struct {
 
 // ContactResponse represents a contact or group for the API
 type ContactResponse struct {
-	JID          string `json:"jid"`
-	Name         string `json:"name"`
-	ProfileImage string `json:"profile_image,omitempty"`
-	IsGroup      bool   `json:"is_group"`
+	JID             string `json:"jid"`
+	Name            string `json:"name"`
+	ProfileImage    string `json:"profile_image,omitempty"`
+	IsGroup         bool   `json:"is_group"`
+	UnreadCount     int    `json:"unread_count"`
+	LastMessageTime string `json:"last_message_time,omitempty"`
 }
 
 // AllowContactRequest represents a contact to be allowed
@@ -1191,12 +1357,12 @@ func startRESTServer(port int) {
 			}
 		}
 
-		// Get all contacts
-		contacts, err := client.Store.Contacts.GetAllContacts(context.TODO())
-		if err != nil {
-			http.Error(w, "Failed to get contacts: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
+		// // Get all contacts
+		// contacts, err := client.Store.Contacts.GetAllContacts(context.TODO())
+		// if err != nil {
+		// 	http.Error(w, "Failed to get contacts: "+err.Error(), http.StatusInternalServerError)
+		// 	return
+		// }
 
 		// Get joined groups
 		groups, err := client.GetJoinedGroups()
@@ -1204,39 +1370,46 @@ func startRESTServer(port int) {
 			logger.Warnf("Failed to get joined groups: %v", err)
 		}
 
+		// Get message store for the user
+		messageStore, err := getMessageStoreForUser(userID)
+		if err != nil {
+			logger.Warnf("Failed to get message store: %v", err)
+			// Continue without message store, just won't have unread counts
+		}
+
 		var contactResponses []ContactResponse
 
-		// Process contacts
-		for jid, contact := range contacts {
-			// Get contact name
-			name := contact.FullName
-			if name == "" {
-				name = contact.FirstName
-			}
-			if name == "" {
-				name = contact.PushName
-			}
-			if name == "" {
-				name = jid.User
-			}
+		// // Process contacts
+		// for jid, contact := range contacts {
+		// 	// Get contact name
+		// 	name := contact.FullName
+		// 	if name == "" {
+		// 		name = contact.FirstName
+		// 	}
+		// 	if name == "" {
+		// 		name = contact.PushName
+		// 	}
+		// 	if name == "" {
+		// 		name = jid.User
+		// 	}
 
-			// // Get profile picture
-			// profilePictureInfo, err := client.GetProfilePictureInfo(jid, nil)
-			// if err != nil {
-			// 	logger.Warnf("Failed to get profile picture info for contact %s: %v", jid.String(), err)
-			// }
-			profileImage := ""
-			// if profilePictureInfo != nil {
-			// 	profileImage = profilePictureInfo.URL
-			// }
+		// 	// // Get profile picture
+		// 	// profilePictureInfo, err := client.GetProfilePictureInfo(jid, nil)
+		// 	// if err != nil {
+		// 	// 	logger.Warnf("Failed to get profile picture info for contact %s: %v", jid.String(), err)
+		// 	// }
+		// 	profileImage := ""
+		// 	// if profilePictureInfo != nil {
+		// 	// 	profileImage = profilePictureInfo.URL
+		// 	// }
 
-			contactResponses = append(contactResponses, ContactResponse{
-				JID:          jid.String(),
-				Name:         name,
-				ProfileImage: profileImage,
-				IsGroup:      false,
-			})
-		}
+		// 	contactResponses = append(contactResponses, ContactResponse{
+		// 		JID:          jid.String(),
+		// 		Name:         name,
+		// 		ProfileImage: profileImage,
+		// 		IsGroup:      false,
+		// 	})
+		// }
 
 		// Process groups (add groups that might not be in contacts)
 		for _, group := range groups {
@@ -1249,12 +1422,29 @@ func startRESTServer(port int) {
 			// if profilePictureInfo != nil {
 			// 	profileImage = profilePictureInfo.URL
 			// }
+			// Get unread count and last message time if message store is available
+			var unreadCount int
+			var lastMessageTimeStr string
+			if messageStore != nil {
+				count, lastMessageTime, err := messageStore.GetUnreadCountAndLastMessageTime(group.JID.String())
+				if err != nil {
+					logger.Warnf("Failed to get unread count and last message time for group %s: %v", group.JID.String(), err)
+				} else {
+					unreadCount = count
+					// Format last message time if available
+					if lastMessageTime != nil {
+						lastMessageTimeStr = lastMessageTime.Format("2006-01-02 15:04:05")
+					}
+				}
+			}
 
 			contactResponses = append(contactResponses, ContactResponse{
-				JID:          group.JID.String(),
-				Name:         group.Name,
-				ProfileImage: profileImage,
-				IsGroup:      true,
+				JID:             group.JID.String(),
+				Name:            group.Name,
+				ProfileImage:    profileImage,
+				IsGroup:         true,
+				UnreadCount:     unreadCount,
+				LastMessageTime: lastMessageTimeStr,
 			})
 		}
 
@@ -1311,6 +1501,56 @@ func startRESTServer(port int) {
 			Message: fmt.Sprintf("Successfully allowed %d contacts", allowed),
 			Allowed: allowed,
 		})
+	})
+
+	// Handler for getting messages by IDs
+	http.HandleFunc("/api/get_messages", func(w http.ResponseWriter, r *http.Request) {
+		userID := r.URL.Query().Get("user_id")
+		if userID == "" {
+			http.Error(w, "user_id required", http.StatusBadRequest)
+			return
+		}
+
+		// Only allow POST requests
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Parse request body
+		var req struct {
+			MessageIDs []string `json:"message_ids"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if len(req.MessageIDs) == 0 {
+			http.Error(w, "message_ids cannot be empty", http.StatusBadRequest)
+			return
+		}
+
+		// Get message store for the user
+		messageStore, err := NewMessageStore(userID)
+		if err != nil {
+			http.Error(w, "Failed to get message store: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer messageStore.Close()
+
+		// Get messages by IDs
+		messages, err := messageStore.GetMessagesByIDs(req.MessageIDs)
+		if err != nil {
+			http.Error(w, "Failed to get messages: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Set response headers
+		w.Header().Set("Content-Type", "application/json")
+
+		// Send response
+		json.NewEncoder(w).Encode(messages)
 	})
 
 	// Handler for logging out users
@@ -1396,6 +1636,15 @@ func main() {
 		return
 	}
 
+	// Run database migration for all existing databases
+	logger.Infof("Running database migrations...")
+	if err := runDatabaseMigrations(); err != nil {
+		logger.Errorf("Database migration failed: %v", err)
+		// Continue anyway, as this might be a new installation
+	} else {
+		logger.Infof("Database migrations completed successfully")
+	}
+
 	// Do not create any WhatsApp client or session in `main()`
 	// All client/session creation should be handled per-user in `getClientForUser`.
 
@@ -1415,6 +1664,50 @@ func main() {
 	// Disconnect client
 	// The client is managed per-user, so we don't disconnect it here directly.
 	// The REST server will handle its lifecycle.
+}
+
+// runDatabaseMigrations runs migrations for all existing databases
+func runDatabaseMigrations() error {
+	// Get all user directories in the store folder
+	entries, err := os.ReadDir("store")
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Store directory doesn't exist yet, nothing to migrate
+			return nil
+		}
+		return fmt.Errorf("failed to read store directory: %v", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			userID := entry.Name()
+			dbPath := fmt.Sprintf("store/%s/messages.db", userID)
+
+			// Check if database file exists
+			if _, err := os.Stat(dbPath); err == nil {
+				fmt.Printf("Migrating database for user: %s\n", userID)
+
+				// Open database for migration
+				db, err := sql.Open("sqlite3", "file:"+dbPath+"?_foreign_keys=on")
+				if err != nil {
+					fmt.Printf("Failed to open database for user %s: %v\n", userID, err)
+					continue
+				}
+
+				// Run migration
+				if err := migrateDatabase(db); err != nil {
+					fmt.Printf("Failed to migrate database for user %s: %v\n", userID, err)
+					db.Close()
+					continue
+				}
+
+				db.Close()
+				fmt.Printf("Successfully migrated database for user: %s\n", userID)
+			}
+		}
+	}
+
+	return nil
 }
 
 // GetChatName determines the appropriate name for a chat based on JID and other info
@@ -1515,6 +1808,11 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 			continue
 		}
 
+		unreadCount := 0
+		if conversation.UnreadCount != nil {
+			unreadCount = int(*conversation.UnreadCount)
+		}
+
 		chatJID := *conversation.ID
 
 		// Try to parse the JID
@@ -1544,7 +1842,7 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 				continue
 			}
 
-			messageStore.StoreChat(chatJID, name, timestamp)
+			messageStore.StoreChat(chatJID, name, timestamp, unreadCount)
 
 			// Store messages
 			for _, msg := range messages {
@@ -1600,6 +1898,11 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 				} else {
 					sender = jid.User
 				}
+
+				// fmt.Printf("msg.GetMessage().GetParticipant(): %v\n", msg.GetMessage().GetPushName())
+				// // fmt.Printf("msg.GetMessage().GetParticipant(): %v\n", msg.GetMessage().get)
+				// senderName := msg.Message.Message.ContactMessage.GetVcard()
+				// fmt.Printf("senderName:============ %s\n", senderName)
 
 				// Store message
 				msgID := ""
@@ -1873,4 +2176,51 @@ func getMessageStoreForUser(userID string) (*MessageStore, error) {
 	}
 	messageStores[userID] = store
 	return store, nil
+}
+
+// UpdateUnreadCount updates the unread count for a specific chat
+func (store *MessageStore) UpdateUnreadCount(chatJID string, unreadCount int) error {
+	_, err := store.db.Exec(
+		"UPDATE chats SET unread_count = ? WHERE jid = ?",
+		unreadCount, chatJID,
+	)
+	return err
+}
+
+// IncrementUnreadCount increments the unread count for a specific chat
+func (store *MessageStore) IncrementUnreadCount(chatJID string) error {
+	_, err := store.db.Exec(
+		"UPDATE chats SET unread_count = unread_count + 1 WHERE jid = ?",
+		chatJID,
+	)
+	return err
+}
+
+// ResetUnreadCount resets the unread count to 0 for a specific chat
+func (store *MessageStore) ResetUnreadCount(chatJID string) error {
+	_, err := store.db.Exec(
+		"UPDATE chats SET unread_count = 0 WHERE jid = ?",
+		chatJID,
+	)
+	return err
+}
+
+// GetUnreadCountAndLastMessageTime returns the unread count and last message time for a specific chat
+func (store *MessageStore) GetUnreadCountAndLastMessageTime(chatJID string) (int, *time.Time, error) {
+	var unreadCount int
+	var lastMessageTime *time.Time
+	err := store.db.QueryRow("SELECT unread_count, last_message_time FROM chats WHERE jid = ?", chatJID).Scan(&unreadCount, &lastMessageTime)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, nil, nil
+		}
+		return 0, nil, err
+	}
+	return unreadCount, lastMessageTime, nil
+}
+
+// GetUnreadCount returns the unread count for a specific chat (maintains backward compatibility)
+func (store *MessageStore) GetUnreadCount(chatJID string) (int, error) {
+	unreadCount, _, err := store.GetUnreadCountAndLastMessageTime(chatJID)
+	return unreadCount, err
 }

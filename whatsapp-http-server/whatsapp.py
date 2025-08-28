@@ -134,7 +134,8 @@ def get_allowed_contacts(user_id: str) -> dict:
                 jid,
                 name,
                 last_message_time,
-                is_allowed
+                is_allowed,
+                unread_count
             FROM chats
             WHERE is_allowed = TRUE AND jid LIKE '%@g.us'
             ORDER BY name, jid
@@ -149,6 +150,7 @@ def get_allowed_contacts(user_id: str) -> dict:
                 'name': chat_data[1],
                 'last_message_time': chat_data[2],
                 'is_allowed': bool(chat_data[3]),
+                'unread_count': chat_data[4],
                 'is_group': chat_data[0].endswith("@g.us")
             }
             result.append(chat)

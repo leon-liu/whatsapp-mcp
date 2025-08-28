@@ -58,6 +58,7 @@ class Chat:
     last_sender: Optional[str] = None
     last_sender_name: Optional[str] = None
     last_is_from_me: Optional[bool] = None
+    unread_count: Optional[int] = 0
 
     @property
     def is_group(self) -> bool:
@@ -73,7 +74,8 @@ class Chat:
             'last_sender': self.last_sender,
             'last_sender_name': self.last_sender_name,
             'last_is_from_me': self.last_is_from_me,
-            'is_group': self.is_group
+            'is_group': self.is_group,
+            'unread_count': self.unread_count
         }
 
 @dataclass
@@ -266,9 +268,7 @@ def list_messages(
                 messages_with_context.extend(context.before)
                 messages_with_context.append(context.message)
                 messages_with_context.extend(context.after)
-            
             return messages_with_context
-        
         # Return messages without context
         return result
         
@@ -399,6 +399,7 @@ def list_chats(user_id: str,
                 chats.jid,
                 chats.name,
                 chats.last_message_time,
+                chats.unread_count,
                 messages.content as last_message,
                 messages.sender as last_sender,
                 messages.is_from_me as last_is_from_me,
@@ -444,10 +445,11 @@ def list_chats(user_id: str,
                 jid=chat_data[0],
                 name=chat_data[1],
                 last_message_time=datetime.fromisoformat(chat_data[2]) if chat_data[2] else None,
-                last_message=chat_data[3],
-                last_sender=chat_data[4],
-                last_sender_name=chat_data[6],
-                last_is_from_me=chat_data[5]
+                unread_count=chat_data[3],
+                last_message=chat_data[4],
+                last_sender=chat_data[5],
+                last_sender_name=chat_data[7],
+                last_is_from_me=chat_data[6]
             )
             result.append(chat)
             
@@ -527,6 +529,7 @@ def get_contact_chats(user_id: str, jid: str, limit: int = 20, page: int = 0) ->
                 c.jid,
                 c.name,
                 c.last_message_time,
+                c.unread_count,
                 m.content as last_message,
                 m.sender as last_sender,
                 m.is_from_me as last_is_from_me
@@ -545,10 +548,11 @@ def get_contact_chats(user_id: str, jid: str, limit: int = 20, page: int = 0) ->
                 jid=chat_data[0],
                 name=chat_data[1],
                 last_message_time=datetime.fromisoformat(chat_data[2]) if chat_data[2] else None,
-                last_message=chat_data[3],
-                last_sender=chat_data[4],
+                unread_count=chat_data[3],
+                last_message=chat_data[4],
+                last_sender=chat_data[5],
                 last_sender_name=None,  # This function doesn't include sender name
-                last_is_from_me=chat_data[5]
+                last_is_from_me=chat_data[6]
             )
             result.append(chat)
             
@@ -632,6 +636,7 @@ def get_chat(user_id: str, chat_jid: str, include_last_message: bool = True) -> 
                 c.jid,
                 c.name,
                 c.last_message_time,
+                c.unread_count,
                 m.content as last_message,
                 m.sender as last_sender,
                 m.is_from_me as last_is_from_me
@@ -656,10 +661,11 @@ def get_chat(user_id: str, chat_jid: str, include_last_message: bool = True) -> 
             jid=chat_data[0],
             name=chat_data[1],
             last_message_time=datetime.fromisoformat(chat_data[2]) if chat_data[2] else None,
-            last_message=chat_data[3],
-            last_sender=chat_data[4],
+            unread_count=chat_data[3],
+            last_message=chat_data[4],
+            last_sender=chat_data[5],
             last_sender_name=None,  # This function doesn't include sender name
-            last_is_from_me=chat_data[5]
+            last_is_from_me=chat_data[6]
         )
         
     except sqlite3.Error as e:
@@ -684,6 +690,7 @@ def get_direct_chat_by_contact(user_id: str, sender_phone_number: str) -> Option
                 c.jid,
                 c.name,
                 c.last_message_time,
+                c.unread_count,
                 m.content as last_message,
                 m.sender as last_sender,
                 m.is_from_me as last_is_from_me
@@ -703,10 +710,11 @@ def get_direct_chat_by_contact(user_id: str, sender_phone_number: str) -> Option
             jid=chat_data[0],
             name=chat_data[1],
             last_message_time=datetime.fromisoformat(chat_data[2]) if chat_data[2] else None,
-            last_message=chat_data[3],
-            last_sender=chat_data[4],
+            unread_count=chat_data[3],
+            last_message=chat_data[4],
+            last_sender=chat_data[5],
             last_sender_name=None,  # This function doesn't include sender name
-            last_is_from_me=chat_data[5]
+            last_is_from_me=chat_data[6]
         )
         
     except sqlite3.Error as e:
