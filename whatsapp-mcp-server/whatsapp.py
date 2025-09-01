@@ -242,7 +242,8 @@ def list_messages(
         query_parts.append("ORDER BY messages.timestamp DESC")
         query_parts.append("LIMIT ? OFFSET ?")
         params.extend([limit, offset])
-        
+        print("where_clauses>>SDDDssssssss:", " ".join(query_parts), tuple(params))
+
         cursor.execute(" ".join(query_parts), tuple(params))
         messages = cursor.fetchall()
         
@@ -269,6 +270,8 @@ def list_messages(
                 messages_with_context.append(context.message)
                 messages_with_context.extend(context.after)
             return messages_with_context
+        
+        print("result>>SDDD:", result)
         # Return messages without context
         return result
         
