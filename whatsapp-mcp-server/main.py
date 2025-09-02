@@ -42,7 +42,7 @@ def list_messages(
     sender_phone_number: Optional[str] = None,
     chat_jid: Optional[str] = None,
     query: Optional[str] = None,
-    limit: int = 20,
+    limit: int = 2000,
     page: int = 0,
     include_context: bool = True,
     context_before: int = 1,
@@ -82,7 +82,7 @@ def list_messages(
 def list_chats(
     user_id: str,
     query: Optional[str] = None,
-    limit: int = 20,
+    limit: int = 2000,
     page: int = 0,
     include_last_message: bool = True,
     sort_by: str = "last_active"
@@ -131,7 +131,7 @@ def get_direct_chat_by_contact(user_id: str, sender_phone_number: str) -> Dict[s
     return chat.to_dict() if chat else None
 
 @mcp.tool()
-def get_contact_chats(user_id: str, jid: str, limit: int = 20, page: int = 0) -> List[Dict[str, Any]]:
+def get_contact_chats(user_id: str, jid: str, limit: int = 2000, page: int = 0) -> List[Dict[str, Any]]:
     """Get all WhatsApp chats involving the contact for a specific user.
     
     Args:

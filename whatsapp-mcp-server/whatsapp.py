@@ -179,7 +179,7 @@ def list_messages(
     sender_phone_number: Optional[str] = None,
     chat_jid: Optional[str] = None,
     query: Optional[str] = None,
-    limit: int = 20,
+    limit: int = 2000,
     page: int = 0,
     include_context: bool = True,
     context_before: int = 1,
@@ -383,7 +383,7 @@ def get_message_context(
 
 def list_chats(user_id: str,
     query: Optional[str] = None,
-    limit: int = 20,
+    limit: int = 2000,
     page: int = 0,
     include_last_message: bool = True,
     sort_by: str = "last_active"
@@ -512,7 +512,7 @@ def search_contacts(query: str, user_id: Optional[str] = None) -> List[Contact]:
             conn.close()
 
 
-def get_contact_chats(user_id: str, jid: str, limit: int = 20, page: int = 0) -> List[Chat]:
+def get_contact_chats(user_id: str, jid: str, limit: int = 2000, page: int = 0) -> List[Chat]:
     """Get all group chats involving the contact (only JIDs ending with @g.us).
     
     Args:

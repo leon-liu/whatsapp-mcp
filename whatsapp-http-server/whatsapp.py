@@ -34,7 +34,7 @@ class Chat:
 def list_chats(
     user_id: str,
     query: Optional[str] = None,
-    limit: int = 20,
+    limit: int = 2000,
     page: int = 0,
     include_last_message: bool = True,
     sort_by: str = "last_active"

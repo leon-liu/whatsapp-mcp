@@ -1,4 +1,4 @@
-1. ~/whatsapp-mcp
+1. cd ~/whatsapp-mcp
 2. git pull #get latest code
 
 
@@ -7,7 +7,8 @@
 3. ps aux | grep ./whatsapp-bridge #find out pid e.g. 87502
 4. kill -9 the pid from step 5 or merge 5 and 6 to use sudo pkill -f "whatsapp-bridge"
 5. nohup ./whatsapp-bridge &
-6. ps aux | grep ./whatsapp-bridge or tail -100 nohup.out to check status
+6. ps aux | grep ./whatsapp-bridge #or 
+tail -100 nohup.out #to check status
 
 
 
